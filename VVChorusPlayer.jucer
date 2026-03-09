@@ -12,9 +12,9 @@
             file="Source/PluginEditor.cpp"/>
       <FILE id="tavIV6" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
       <FILE id="L4hVx2" name="VoiceVoxClient.cpp" compile="1" resource="0"
-        file="Source/VoiceVoxClient.cpp"/>
+            file="Source/VoiceVoxClient.cpp"/>
       <FILE id="Q2nKp8" name="VoiceVoxClient.h" compile="0" resource="0"
-        file="Source/VoiceVoxClient.h"/>
+            file="Source/VoiceVoxClient.h"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>
@@ -38,7 +38,7 @@
   <EXPORTFORMATS>
     <VS2026 targetFolder="Builds/VisualStudio2026">
       <CONFIGURATIONS>
-        <CONFIGURATION isDebug="1" name="Debug" targetName="VVProject Synth"/>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="VVProject Synth" enablePluginBinaryCopyStep="0"/>
         <CONFIGURATION isDebug="0" name="Release" targetName="VVProject Synth"/>
       </CONFIGURATIONS>
       <MODULEPATHS>
