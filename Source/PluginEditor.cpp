@@ -457,38 +457,63 @@ int VVChorusPlayerAudioProcessorEditor::getNumRows()
 
 void VVChorusPlayerAudioProcessorEditor::paintListBoxItem(int rowNumber, juce::Graphics &g, int width, int height, bool rowIsSelected)
 {
-    juce::ignoreUnused(rowNumber, width, height);
-
-    if (!rowIsSelected)
+    if (!juce::isPositiveAndBelow(rowNumber, availableSingers.size()))
         return;
 
-    g.fillAll(juce::Colour::fromRGBA(120, 170, 130, 28));
+    const auto &singer = availableSingers.getReference(rowNumber);
+    const auto checked = containsSpeakerId(selectedSpeakerIds, singer.speakerId);
+
+    auto bounds = juce::Rectangle<int>(0, 0, width, height);
+    if (rowIsSelected)
+        g.fillAll(juce::Colour::fromRGBA(120, 170, 130, 22));
+
+    auto content = bounds.reduced(8, 4);
+    const auto checkSize = juce::jlimit(14, 18, content.getHeight());
+    auto checkBounds = content.removeFromLeft(checkSize).withSizeKeepingCentre(checkSize, checkSize);
+    content.removeFromLeft(8);
+
+    g.setColour(juce::Colours::white.withAlpha(0.96f));
+    g.fillRoundedRectangle(checkBounds.toFloat(), 3.0f);
+    g.setColour(juce::Colour::fromRGB(103, 150, 114));
+    g.drawRoundedRectangle(checkBounds.toFloat(), 3.0f, 1.2f);
+
+    if (checked)
+    {
+        juce::Path tick;
+        tick.startNewSubPath(static_cast<float>(checkBounds.getX() + 3), static_cast<float>(checkBounds.getCentreY()));
+        tick.lineTo(static_cast<float>(checkBounds.getX() + checkBounds.getWidth() / 2 - 1), static_cast<float>(checkBounds.getBottom() - 4));
+        tick.lineTo(static_cast<float>(checkBounds.getRight() - 3), static_cast<float>(checkBounds.getY() + 4));
+        g.setColour(juce::Colour::fromRGB(56, 118, 72));
+        g.strokePath(tick, juce::PathStrokeType(2.0f));
+    }
+
+    g.setColour(juce::Colour::fromRGB(35, 66, 45));
+    g.setFont(juce::Font(juce::FontOptions(15.0f)));
+    g.drawFittedText(getSingerDisplayText(singer), content, juce::Justification::centredLeft, 1, 0.92f);
+}
+
+void VVChorusPlayerAudioProcessorEditor::listBoxItemClicked(int rowNumber, const juce::MouseEvent &event)
+{
+    juce::ignoreUnused(event);
+
+    if (isGeneratingVoicevox || isLoadingSingers)
+        return;
+
+    if (!juce::isPositiveAndBelow(rowNumber, availableSingers.size()))
+        return;
+
+    const auto &singer = availableSingers.getReference(rowNumber);
+    const auto wasSelected = containsSpeakerId(selectedSpeakerIds, singer.speakerId);
+    setSpeakerSelected(selectedSpeakerIds, singer.speakerId, !wasSelected);
+    updateSingerSelectionLabel();
+    updateActionState();
+    singerListBox.repaintRow(rowNumber);
 }
 
 juce::Component *VVChorusPlayerAudioProcessorEditor::refreshComponentForRow(int rowNumber, bool isRowSelected, juce::Component *existingComponentToUpdate)
 {
-    juce::ignoreUnused(isRowSelected);
-
-    if (!juce::isPositiveAndBelow(rowNumber, availableSingers.size()))
-        return nullptr;
-
-    auto *rowComponent = dynamic_cast<SingerListRowComponent *>(existingComponentToUpdate);
-    if (rowComponent == nullptr)
-        rowComponent = new SingerListRowComponent();
-
-    const auto singer = availableSingers.getReference(rowNumber);
-    const auto selected = containsSpeakerId(selectedSpeakerIds, singer.speakerId);
-
-    rowComponent->bind(getSingerDisplayText(singer), selected, [safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this), speakerId = singer.speakerId](bool shouldSelect)
-                       {
-                           if (safeThis == nullptr)
-                               return;
-
-                           setSpeakerSelected(safeThis->selectedSpeakerIds, speakerId, shouldSelect);
-                           safeThis->updateSingerSelectionLabel();
-                           safeThis->updateActionState();
-                       });
-    return rowComponent;
+    juce::ignoreUnused(rowNumber, isRowSelected, existingComponentToUpdate);
+    return nullptr;
 }
 
 void VVChorusPlayerAudioProcessorEditor::startFetchSingers()

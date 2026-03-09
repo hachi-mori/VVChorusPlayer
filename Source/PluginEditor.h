@@ -32,6 +32,7 @@ private:
 
   int getNumRows() override;
   void paintListBoxItem(int rowNumber, juce::Graphics &g, int width, int height, bool rowIsSelected) override;
+  void listBoxItemClicked(int rowNumber, const juce::MouseEvent &event) override;
   juce::Component *refreshComponentForRow(int rowNumber, bool isRowSelected, juce::Component *existingComponentToUpdate) override;
   void timerCallback() override;
   void startFetchSingers();
