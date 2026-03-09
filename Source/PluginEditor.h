@@ -27,6 +27,8 @@ public:
   void resized() override;
 
 private:
+  class StyleSwitchLookAndFeel;
+
   void timerCallback() override;
   void startFetchSingers();
   void startVoicevoxGeneration(const voicevox::SingerStyle &selectedSinger);
@@ -43,6 +45,7 @@ private:
   juce::Label singerStepLabel;
   juce::ComboBox singerComboBox;
   juce::ToggleButton showAllStylesToggle;
+  std::unique_ptr<StyleSwitchLookAndFeel> showAllStylesToggleLookAndFeel;
   juce::Label fileStepLabel;
   juce::TextButton selectVvprojButton;
   juce::Label selectedVvprojLabel;

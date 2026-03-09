@@ -69,6 +69,61 @@ namespace
     }
 }
 
+class VVChorusPlayerAudioProcessorEditor::StyleSwitchLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    void drawToggleButton(juce::Graphics &g,
+                          juce::ToggleButton &button,
+                          bool shouldDrawButtonAsHighlighted,
+                          bool shouldDrawButtonAsDown) override
+    {
+        auto bounds = button.getLocalBounds().toFloat().reduced(1.0f);
+        const auto enabledAlpha = button.isEnabled() ? 1.0f : 0.55f;
+        const auto isOn = button.getToggleState();
+
+        const auto textColour = button.findColour(juce::ToggleButton::textColourId).withMultipliedAlpha(enabledAlpha);
+        auto onColour = button.findColour(juce::ToggleButton::tickColourId);
+        auto offColour = button.findColour(juce::ToggleButton::tickDisabledColourId);
+
+        auto trackColour = (isOn ? onColour : offColour).withMultipliedAlpha(enabledAlpha);
+        if (shouldDrawButtonAsHighlighted)
+            trackColour = trackColour.brighter(0.08f);
+        if (shouldDrawButtonAsDown)
+            trackColour = trackColour.darker(0.08f);
+
+        const auto labelWidth = juce::jlimit(48.0f, 80.0f, bounds.getWidth() * 0.32f);
+        const auto labelArea = bounds.removeFromLeft(labelWidth);
+        g.setColour(textColour);
+        g.setFont(juce::Font(juce::FontOptions(14.0f)).boldened());
+        g.drawFittedText(button.getButtonText(), labelArea.toNearestInt(), juce::Justification::centredLeft, 1);
+
+        auto trackArea = bounds.reduced(4.0f, 6.0f);
+        trackArea.setWidth(juce::jlimit(84.0f, 140.0f, trackArea.getWidth()));
+        trackArea = trackArea.withX(bounds.getRight() - trackArea.getWidth());
+
+        const auto corner = trackArea.getHeight() * 0.5f;
+        g.setColour(trackColour);
+        g.fillRoundedRectangle(trackArea, corner);
+
+        g.setColour(juce::Colours::white.withMultipliedAlpha(enabledAlpha * 0.95f));
+        const auto stateText = isOn ? jp(u8"全スタイル") : jp(u8"先頭のみ");
+        g.setFont(juce::Font(juce::FontOptions(12.0f)).boldened());
+        g.drawFittedText(stateText, trackArea.toNearestInt(), juce::Justification::centred, 1);
+
+        const auto knobMargin = 3.0f;
+        const auto knobDiameter = juce::jmax(8.0f, trackArea.getHeight() - knobMargin * 2.0f);
+        auto knobX = trackArea.getX() + knobMargin;
+        if (isOn)
+            knobX = trackArea.getRight() - knobMargin - knobDiameter;
+        const juce::Rectangle<float> knob(knobX, trackArea.getY() + knobMargin, knobDiameter, knobDiameter);
+
+        g.setColour(juce::Colours::white.withMultipliedAlpha(enabledAlpha));
+        g.fillEllipse(knob);
+        g.setColour(juce::Colours::black.withAlpha(0.15f * enabledAlpha));
+        g.drawEllipse(knob, 1.0f);
+    }
+};
+
 //==============================================================================
 VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusPlayerAudioProcessor &p)
     : AudioProcessorEditor(&p), audioProcessor(p)
@@ -97,17 +152,17 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     };
 
     addAndMakeVisible(showAllStylesToggle);
-    showAllStylesToggle.setButtonText(jp(u8"表示: 先頭スタイルのみ"));
+    showAllStylesToggle.setButtonText(jp(u8"表示"));
+    showAllStylesToggle.setClickingTogglesState(true);
     showAllStylesToggle.setToggleState(isShowingAllStyles, juce::dontSendNotification);
+    showAllStylesToggleLookAndFeel = std::make_unique<StyleSwitchLookAndFeel>();
+    showAllStylesToggle.setLookAndFeel(showAllStylesToggleLookAndFeel.get());
     showAllStylesToggle.onClick = [this]
     {
         if (isLoadingSingers || isGeneratingVoicevox)
             return;
 
         isShowingAllStyles = showAllStylesToggle.getToggleState();
-        showAllStylesToggle.setButtonText(isShowingAllStyles
-                                              ? jp(u8"表示: 全スタイル")
-                                              : jp(u8"表示: 先頭スタイルのみ"));
         startFetchSingers();
     };
 
@@ -288,6 +343,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
 
 VVChorusPlayerAudioProcessorEditor::~VVChorusPlayerAudioProcessorEditor()
 {
+    showAllStylesToggle.setLookAndFeel(nullptr);
 }
 
 void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
@@ -464,8 +520,8 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
     singerComboBox.setColour(juce::ComboBox::outlineColourId, accent.darker(0.2f));
 
     showAllStylesToggle.setColour(juce::ToggleButton::textColourId, text);
-    showAllStylesToggle.setColour(juce::ToggleButton::tickColourId, accent.darker(0.25f));
-    showAllStylesToggle.setColour(juce::ToggleButton::tickDisabledColourId, accent.darker(0.45f));
+    showAllStylesToggle.setColour(juce::ToggleButton::tickColourId, accent.darker(0.15f));
+    showAllStylesToggle.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colour::fromRGB(151, 171, 157));
 
     playButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.05f));
     playButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
