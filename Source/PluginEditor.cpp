@@ -91,15 +91,18 @@ public:
         if (shouldDrawButtonAsDown)
             trackColour = trackColour.darker(0.08f);
 
-        const auto labelWidth = juce::jlimit(48.0f, 80.0f, bounds.getWidth() * 0.32f);
-        const auto labelArea = bounds.removeFromLeft(labelWidth);
-        g.setColour(textColour);
-        g.setFont(juce::Font(juce::FontOptions(14.0f)).boldened());
-        g.drawFittedText(button.getButtonText(), labelArea.toNearestInt(), juce::Justification::centredLeft, 1);
-
         auto trackArea = bounds.reduced(4.0f, 6.0f);
         trackArea.setWidth(juce::jlimit(84.0f, 140.0f, trackArea.getWidth()));
         trackArea = trackArea.withX(bounds.getRight() - trackArea.getWidth());
+
+        const auto labelRightPadding = 8.0f;
+        const juce::Rectangle<float> labelArea(bounds.getX(),
+                                               bounds.getY(),
+                                               juce::jmax(0.0f, trackArea.getX() - bounds.getX() - labelRightPadding),
+                                               bounds.getHeight());
+        g.setColour(textColour);
+        g.setFont(juce::Font(juce::FontOptions(14.0f)).boldened());
+        g.drawFittedText(button.getButtonText(), labelArea.toNearestInt(), juce::Justification::centredRight, 1);
 
         const auto corner = trackArea.getHeight() * 0.5f;
         g.setColour(trackColour);
