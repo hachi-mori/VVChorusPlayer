@@ -16,7 +16,8 @@
 /**
  */
 class VVChorusPlayerAudioProcessorEditor : public juce::AudioProcessorEditor,
-                                           private juce::Timer
+                                           private juce::Timer,
+                                           private juce::ListBoxModel
 {
 public:
   VVChorusPlayerAudioProcessorEditor(VVChorusPlayerAudioProcessor &);
@@ -29,10 +30,16 @@ public:
 private:
   class StyleSwitchLookAndFeel;
 
+  int getNumRows() override;
+  void paintListBoxItem(int rowNumber, juce::Graphics &g, int width, int height, bool rowIsSelected) override;
+  juce::Component *refreshComponentForRow(int rowNumber, bool isRowSelected, juce::Component *existingComponentToUpdate) override;
   void timerCallback() override;
   void startFetchSingers();
-  void startVoicevoxGeneration(const voicevox::SingerStyle &selectedSinger);
-  void rebuildSingerComboItems();
+  void startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers);
+  void rebuildSingerListItems();
+  juce::Array<voicevox::SingerStyle> getSelectedSingers() const;
+  juce::String getSingerDisplayText(const voicevox::SingerStyle &singer) const;
+  void updateSingerSelectionLabel();
   void refreshPreviewUi();
   juce::String formatSeconds(double seconds) const;
   void updateActionState();
@@ -43,7 +50,10 @@ private:
   VVChorusPlayerAudioProcessor &audioProcessor;
 
   juce::Label singerStepLabel;
-  juce::ComboBox singerComboBox;
+  juce::ListBox singerListBox;
+  juce::Label singerSelectionLabel;
+  juce::TextButton selectAllSingersButton;
+  juce::TextButton clearSingerSelectionButton;
   juce::ToggleButton showAllStylesToggle;
   std::unique_ptr<StyleSwitchLookAndFeel> showAllStylesToggleLookAndFeel;
   juce::Label fileStepLabel;
@@ -67,6 +77,7 @@ private:
   bool isShowingAllStyles{false};
   bool isVoicevoxUnavailable{false};
   juce::Array<voicevox::SingerStyle> availableSingers;
+  juce::Array<int> selectedSpeakerIds;
   juce::String voicevoxBaseUrl{"http://127.0.0.1:50021"};
   juce::uint32 nextVoicevoxRetryTick{0};
 

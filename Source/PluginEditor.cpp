@@ -67,6 +67,23 @@ namespace
 
         return text.trim();
     }
+
+    bool containsSpeakerId(const juce::Array<int> &speakerIds, int speakerId)
+    {
+        return speakerIds.contains(speakerId);
+    }
+
+    void setSpeakerSelected(juce::Array<int> &speakerIds, int speakerId, bool shouldSelect)
+    {
+        if (shouldSelect)
+        {
+            if (!speakerIds.contains(speakerId))
+                speakerIds.add(speakerId);
+            return;
+        }
+
+        speakerIds.removeFirstMatchingValue(speakerId);
+    }
 }
 
 class VVChorusPlayerAudioProcessorEditor::StyleSwitchLookAndFeel : public juce::LookAndFeel_V4
@@ -127,6 +144,53 @@ public:
     }
 };
 
+class SingerListRowComponent : public juce::Component
+{
+public:
+    SingerListRowComponent()
+    {
+        addAndMakeVisible(toggle);
+        addAndMakeVisible(nameLabel);
+        toggle.setClickingTogglesState(true);
+        toggle.setColour(juce::ToggleButton::tickColourId, juce::Colour::fromRGB(67, 125, 81));
+        toggle.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colour::fromRGB(151, 171, 157));
+
+        nameLabel.setJustificationType(juce::Justification::centredLeft);
+        nameLabel.setColour(juce::Label::textColourId, juce::Colour::fromRGB(35, 66, 45));
+    }
+
+    void bind(const juce::String &labelText, bool isSelected, std::function<void(bool)> onToggleChanged)
+    {
+        callback = std::move(onToggleChanged);
+        isUpdating = true;
+        nameLabel.setText(labelText, juce::dontSendNotification);
+        toggle.setButtonText({});
+        toggle.setToggleState(isSelected, juce::dontSendNotification);
+        isUpdating = false;
+
+        toggle.onClick = [this]
+        {
+            if (isUpdating || callback == nullptr)
+                return;
+            callback(toggle.getToggleState());
+        };
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds().reduced(4, 1);
+        auto left = bounds.removeFromLeft(26);
+        toggle.setBounds(left);
+        nameLabel.setBounds(bounds);
+    }
+
+private:
+    juce::ToggleButton toggle;
+    juce::Label nameLabel;
+    std::function<void(bool)> callback;
+    bool isUpdating{false};
+};
+
 //==============================================================================
 VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusPlayerAudioProcessor &p)
     : AudioProcessorEditor(&p), audioProcessor(p)
@@ -147,10 +211,43 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     addAndMakeVisible(fileStepLabel);
     addAndMakeVisible(generateStepLabel);
 
-    addAndMakeVisible(singerComboBox);
-    singerComboBox.setTextWhenNothingSelected(jp(u8"キャラクターを選択"));
-    singerComboBox.onChange = [this]
+    addAndMakeVisible(singerSelectionLabel);
+    singerSelectionLabel.setJustificationType(juce::Justification::centredLeft);
+    singerSelectionLabel.setText(jp(u8"0キャラ選択中"), juce::dontSendNotification);
+
+    addAndMakeVisible(singerListBox);
+    singerListBox.setModel(this);
+    singerListBox.setRowHeight(30);
+    singerListBox.setMultipleSelectionEnabled(false);
+
+    addAndMakeVisible(selectAllSingersButton);
+    selectAllSingersButton.setButtonText(jp(u8"全選択"));
+    selectAllSingersButton.onClick = [this]
     {
+        if (isGeneratingVoicevox || isLoadingSingers)
+            return;
+
+        selectedSpeakerIds.clearQuick();
+        for (const auto &singer : availableSingers)
+            selectedSpeakerIds.addIfNotAlreadyThere(singer.speakerId);
+
+        singerListBox.updateContent();
+        singerListBox.repaint();
+        updateSingerSelectionLabel();
+        updateActionState();
+    };
+
+    addAndMakeVisible(clearSingerSelectionButton);
+    clearSingerSelectionButton.setButtonText(jp(u8"選択解除"));
+    clearSingerSelectionButton.onClick = [this]
+    {
+        if (isGeneratingVoicevox || isLoadingSingers)
+            return;
+
+        selectedSpeakerIds.clearQuick();
+        singerListBox.updateContent();
+        singerListBox.repaint();
+        updateSingerSelectionLabel();
         updateActionState();
     };
 
@@ -241,23 +338,26 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         if (baseName.isEmpty())
             baseName = "voice";
 
-        juce::String singerName = jp(u8"unknown");
-        juce::String styleName = jp(u8"style");
-        const auto selectedIndex = singerComboBox.getSelectedItemIndex();
-        if (juce::isPositiveAndBelow(selectedIndex, availableSingers.size()))
+        const auto selectedSingers = getSelectedSingers();
+        juce::String suffix;
+        if (selectedSingers.isEmpty())
         {
-            const auto &selectedSinger = availableSingers.getReference(selectedIndex);
-            if (selectedSinger.singerName.isNotEmpty())
-                singerName = selectedSinger.singerName;
-            if (selectedSinger.styleName.isNotEmpty())
-                styleName = selectedSinger.styleName;
+            suffix = jp(u8"chorus");
+        }
+        else if (selectedSingers.size() == 1)
+        {
+            const auto &singer = selectedSingers.getReference(0);
+            suffix = singer.singerName + jp(u8"（") + singer.styleName + jp(u8"）");
+        }
+        else
+        {
+            suffix = jp(u8"chorus_") + juce::String(selectedSingers.size()) + jp(u8"キャラ");
         }
 
         baseName = sanitizeFileNamePart(baseName);
-        singerName = sanitizeFileNamePart(singerName);
-        styleName = sanitizeFileNamePart(styleName);
+        suffix = sanitizeFileNamePart(suffix);
 
-        auto defaultName = baseName + "-" + singerName + jp(u8"（") + styleName + jp(u8"）") + ".wav";
+        auto defaultName = baseName + "-" + suffix + ".wav";
 
         const auto initialFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(defaultName);
 
@@ -319,10 +419,10 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         if (isGeneratingVoicevox || isLoadingSingers)
             return;
 
-        const auto selectedIndex = singerComboBox.getSelectedItemIndex();
-        if (!juce::isPositiveAndBelow(selectedIndex, availableSingers.size()))
+        const auto selectedSingers = getSelectedSingers();
+        if (selectedSingers.isEmpty())
         {
-            statusLabel.setText(jp(u8"先にキャラを選択してください"), juce::dontSendNotification);
+            statusLabel.setText(jp(u8"先にキャラを1人以上選択してください"), juce::dontSendNotification);
             return;
         }
 
@@ -332,13 +432,13 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
             return;
         }
 
-        startVoicevoxGeneration(availableSingers.getReference(selectedIndex));
+        startVoicevoxGeneration(selectedSingers);
     };
 
     applyTheme();
     setResizable(true, true);
-    setResizeLimits(560, 640, 1100, 980);
-    setSize(780, 760);
+    setResizeLimits(560, 720, 1100, 1080);
+    setSize(780, 880);
 
     startTimerHz(30);
     startFetchSingers();
@@ -346,7 +446,49 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
 
 VVChorusPlayerAudioProcessorEditor::~VVChorusPlayerAudioProcessorEditor()
 {
+    singerListBox.setModel(nullptr);
     showAllStylesToggle.setLookAndFeel(nullptr);
+}
+
+int VVChorusPlayerAudioProcessorEditor::getNumRows()
+{
+    return availableSingers.size();
+}
+
+void VVChorusPlayerAudioProcessorEditor::paintListBoxItem(int rowNumber, juce::Graphics &g, int width, int height, bool rowIsSelected)
+{
+    juce::ignoreUnused(rowNumber, width, height);
+
+    if (!rowIsSelected)
+        return;
+
+    g.fillAll(juce::Colour::fromRGBA(120, 170, 130, 28));
+}
+
+juce::Component *VVChorusPlayerAudioProcessorEditor::refreshComponentForRow(int rowNumber, bool isRowSelected, juce::Component *existingComponentToUpdate)
+{
+    juce::ignoreUnused(isRowSelected);
+
+    if (!juce::isPositiveAndBelow(rowNumber, availableSingers.size()))
+        return nullptr;
+
+    auto *rowComponent = dynamic_cast<SingerListRowComponent *>(existingComponentToUpdate);
+    if (rowComponent == nullptr)
+        rowComponent = new SingerListRowComponent();
+
+    const auto singer = availableSingers.getReference(rowNumber);
+    const auto selected = containsSpeakerId(selectedSpeakerIds, singer.speakerId);
+
+    rowComponent->bind(getSingerDisplayText(singer), selected, [safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this), speakerId = singer.speakerId](bool shouldSelect)
+                       {
+                           if (safeThis == nullptr)
+                               return;
+
+                           setSpeakerSelected(safeThis->selectedSpeakerIds, speakerId, shouldSelect);
+                           safeThis->updateSingerSelectionLabel();
+                           safeThis->updateActionState();
+                       });
+    return rowComponent;
 }
 
 void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
@@ -372,7 +514,6 @@ void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
                 return;
 
             safeThis->isLoadingSingers = false;
-            safeThis->singerComboBox.clear();
             safeThis->availableSingers = singers;
 
             if (result.failed())
@@ -381,6 +522,7 @@ void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
                 safeThis->isVoicevoxUnavailable = true;
                 safeThis->voicevoxWarningLabel.setVisible (true);
                 safeThis->nextVoicevoxRetryTick = juce::Time::getMillisecondCounter() + 2500;
+                safeThis->rebuildSingerListItems();
                 safeThis->updateActionState();
                 safeThis->resized();
                 safeThis->repaint();
@@ -389,7 +531,7 @@ void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
 
             safeThis->isVoicevoxUnavailable = false;
             safeThis->voicevoxWarningLabel.setVisible (false);
-            safeThis->rebuildSingerComboItems();
+            safeThis->rebuildSingerListItems();
             safeThis->updateActionState();
             safeThis->resized();
             safeThis->repaint();
@@ -397,44 +539,47 @@ void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
         .detach();
 }
 
-void VVChorusPlayerAudioProcessorEditor::rebuildSingerComboItems()
+void VVChorusPlayerAudioProcessorEditor::rebuildSingerListItems()
 {
-    const auto selectedText = singerComboBox.getText();
-
-    singerComboBox.clear(juce::dontSendNotification);
-
-    int itemId = 1;
+    juce::Array<int> validSelectedSpeakerIds;
     for (const auto &singer : availableSingers)
     {
-        const auto displayText = isShowingAllStyles
-                                     ? (singer.singerName + " (" + singer.styleName + ")")
-                                     : singer.singerName;
-        singerComboBox.addItem(displayText, itemId++);
+        if (containsSpeakerId(selectedSpeakerIds, singer.speakerId))
+            validSelectedSpeakerIds.addIfNotAlreadyThere(singer.speakerId);
     }
 
-    if (availableSingers.isEmpty())
-        return;
+    selectedSpeakerIds.swapWith(validSelectedSpeakerIds);
 
-    int restoredIndex = -1;
-    for (int i = 0; i < singerComboBox.getNumItems(); ++i)
-    {
-        if (singerComboBox.getItemText(i) == selectedText)
-        {
-            restoredIndex = i;
-            break;
-        }
-    }
-
-    if (restoredIndex >= 0)
-        singerComboBox.setSelectedItemIndex(restoredIndex, juce::dontSendNotification);
-    else
-        singerComboBox.setSelectedItemIndex(0, juce::dontSendNotification);
+    singerListBox.updateContent();
+    singerListBox.repaint();
+    updateSingerSelectionLabel();
 }
 
-void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const voicevox::SingerStyle &selectedSinger)
+juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getSelectedSingers() const
 {
-    const auto keyShift = voicevox::getKeyAdjustment(selectedSinger.singerName, selectedSinger.styleName);
+    juce::Array<voicevox::SingerStyle> selectedSingers;
 
+    for (const auto &singer : availableSingers)
+        if (containsSpeakerId(selectedSpeakerIds, singer.speakerId))
+            selectedSingers.add(singer);
+
+    return selectedSingers;
+}
+
+juce::String VVChorusPlayerAudioProcessorEditor::getSingerDisplayText(const voicevox::SingerStyle &singer) const
+{
+    if (isShowingAllStyles)
+        return singer.singerName + " (" + singer.styleName + ")";
+    return singer.singerName;
+}
+
+void VVChorusPlayerAudioProcessorEditor::updateSingerSelectionLabel()
+{
+    singerSelectionLabel.setText(juce::String(selectedSpeakerIds.size()) + jp(u8"キャラ選択中"), juce::dontSendNotification);
+}
+
+void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers)
+{
     isGeneratingVoicevox = true;
     displayedProgress = 0.0;
     lastRawProgress = 0.0f;
@@ -443,20 +588,18 @@ void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const voicevox:
     secondsPerPercentEstimate = 0.12;
 
     updateActionState();
-    statusLabel.setText(jp(u8"生成開始...\n") + selectedSinger.singerName + " (" + selectedSinger.styleName + ")" + " keyShift=" + juce::String(keyShift),
+    statusLabel.setText(jp(u8"合唱生成を開始...\n選択キャラ数: ") + juce::String(selectedSingers.size()),
                         juce::dontSendNotification);
 
     auto *processor = &audioProcessor;
     const auto safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this);
 
-    std::thread([safeThis, processor, selectedFile = selectedVvprojFile, selectedSinger, baseUrl = voicevoxBaseUrl]
+    std::thread([safeThis, processor, selectedFile = selectedVvprojFile, selectedSingers, baseUrl = voicevoxBaseUrl]
                 {
-        const auto result = processor->generateFromVvproj (selectedFile,
-                                                            0,
-                                                            selectedSinger.speakerId,
-                                                            selectedSinger.singerName,
-                                                            selectedSinger.styleName,
-                                                            baseUrl);
+        const auto result = processor->generateChorusFromVvproj (selectedFile,
+                                                                  0,
+                                                                  selectedSingers,
+                                                                  baseUrl);
 
         juce::MessageManager::callAsync ([safeThis, result]
         {
@@ -483,12 +626,15 @@ void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const voicevox:
 
 void VVChorusPlayerAudioProcessorEditor::updateActionState()
 {
-    const auto hasSingerSelection = juce::isPositiveAndBelow(singerComboBox.getSelectedItemIndex(), availableSingers.size());
+    const auto hasSingerSelection = !selectedSpeakerIds.isEmpty();
     const auto hasVvproj = selectedVvprojFile.existsAsFile();
     const auto isUiLocked = isVoicevoxUnavailable;
     const auto canGenerate = !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && hasSingerSelection && hasVvproj;
 
-    singerComboBox.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
+    singerListBox.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
+    singerSelectionLabel.setEnabled(!isUiLocked);
+    selectAllSingersButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
+    clearSingerSelectionButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !selectedSpeakerIds.isEmpty());
     showAllStylesToggle.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     selectVvprojButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     generateVoicevoxButton.setEnabled(canGenerate);
@@ -518,9 +664,16 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
     generateVoicevoxButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.15f));
     generateVoicevoxButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
 
-    singerComboBox.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-    singerComboBox.setColour(juce::ComboBox::textColourId, text);
-    singerComboBox.setColour(juce::ComboBox::outlineColourId, accent.darker(0.2f));
+    singerListBox.setColour(juce::ListBox::backgroundColourId, juce::Colours::white);
+    singerListBox.setColour(juce::ListBox::outlineColourId, accent.darker(0.2f));
+    singerSelectionLabel.setColour(juce::Label::backgroundColourId, juce::Colours::white);
+    singerSelectionLabel.setColour(juce::Label::textColourId, text);
+    singerSelectionLabel.setColour(juce::Label::outlineColourId, accent.darker(0.2f));
+
+    selectAllSingersButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(124, 188, 136));
+    selectAllSingersButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    clearSingerSelectionButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(177, 204, 183));
+    clearSingerSelectionButton.setColour(juce::TextButton::textColourOffId, text);
 
     showAllStylesToggle.setColour(juce::ToggleButton::textColourId, text);
     showAllStylesToggle.setColour(juce::ToggleButton::tickColourId, accent.darker(0.15f));
@@ -655,9 +808,9 @@ void VVChorusPlayerAudioProcessorEditor::paint(juce::Graphics &g)
 
     g.setColour(juce::Colours::white);
     const auto titleHeight = juce::jlimit(24, 40, getHeight() / 12);
-    const auto titleFontSize = juce::jlimit(16.0f, 32.0f, static_cast<float>(titleHeight) * 0.58f);
+    const auto titleFontSize = juce::jlimit(18.0f, 34.0f, static_cast<float>(titleHeight) * 0.74f);
     g.setFont(juce::Font(juce::FontOptions(titleFontSize)).boldened());
-    g.drawFittedText("VVProject Synth", getLocalBounds().removeFromTop(titleHeight), juce::Justification::centred, 1);
+    g.drawFittedText("VVChorusPlayer", getLocalBounds().removeFromTop(titleHeight), juce::Justification::centred, 1);
 
     if (!waveformArea.isEmpty())
     {
@@ -741,9 +894,20 @@ void VVChorusPlayerAudioProcessorEditor::resized()
         row.removeFromLeft(spacing);
         showAllStylesToggle.setBounds(row.removeFromRight(buttonWidth));
     }
-    area.removeFromTop(spacing);
+    area.removeFromTop(spacing / 2);
 
-    singerComboBox.setBounds(area.removeFromTop(controlHeight));
+    {
+        auto row = area.removeFromTop(controlHeight);
+        singerSelectionLabel.setBounds(row.removeFromLeft(juce::jmax(160, getWidth() / 4)));
+        row.removeFromLeft(spacing / 2);
+        clearSingerSelectionButton.setBounds(row.removeFromRight(juce::jmin(140, buttonWidth)));
+        row.removeFromRight(spacing / 2);
+        selectAllSingersButton.setBounds(row.removeFromRight(juce::jmin(120, buttonWidth / 2 + 40)));
+    }
+    area.removeFromTop(spacing / 2);
+
+    const auto singerListHeight = juce::jlimit(96, 180, getHeight() / 6);
+    singerListBox.setBounds(area.removeFromTop(singerListHeight));
     area.removeFromTop(spacing);
 
     {
@@ -761,7 +925,7 @@ void VVChorusPlayerAudioProcessorEditor::resized()
     const auto minWaveHeight = 72;
     const auto fixedBottomCost = previewHeaderHeight + sliderHeight + exportButtonHeight + spacing * 3;
     const auto baseStatusHeight = juce::jmax(56, remainingForBottom - fixedBottomCost - minWaveHeight);
-    const auto statusHeight = juce::jmax(40, (baseStatusHeight * 5) / 7);
+    const auto statusHeight = juce::jmax(48, (baseStatusHeight * 6) / 7);
 
     statusLabel.setBounds(area.removeFromTop(statusHeight));
     area.removeFromTop(spacing);

@@ -46,6 +46,76 @@ namespace
 
         return result;
     }
+
+    juce::Result mixWavFilesToBuffer(const juce::Array<juce::File> &wavFiles,
+                                     double targetSampleRate,
+                                     juce::AudioBuffer<float> &outBuffer,
+                                     double &outSampleRate)
+    {
+        if (wavFiles.isEmpty())
+            return juce::Result::fail("No WAV files to mix");
+
+        juce::AudioFormatManager tempFormatManager;
+        tempFormatManager.registerBasicFormats();
+
+        juce::Array<juce::AudioBuffer<float>> sourceBuffers;
+        sourceBuffers.ensureStorageAllocated(wavFiles.size());
+
+        int outputChannels = 2;
+        int outputSamples = 0;
+        auto mixedSampleRate = targetSampleRate > 0.0 ? targetSampleRate : 0.0;
+
+        for (const auto &wavFile : wavFiles)
+        {
+            auto reader = std::unique_ptr<juce::AudioFormatReader>(tempFormatManager.createReaderFor(wavFile));
+            if (reader == nullptr)
+                return juce::Result::fail("Failed opening synthesized WAV: " + wavFile.getFileName());
+            if (reader->numChannels <= 0 || reader->lengthInSamples <= 0)
+                return juce::Result::fail("Synthesized WAV is empty: " + wavFile.getFileName());
+
+            juce::AudioBuffer<float> readBuffer(static_cast<int>(reader->numChannels), static_cast<int>(reader->lengthInSamples));
+            if (!reader->read(&readBuffer, 0, static_cast<int>(reader->lengthInSamples), 0, true, true))
+                return juce::Result::fail("Failed reading synthesized WAV: " + wavFile.getFileName());
+
+            const auto sourceRate = reader->sampleRate;
+            if (mixedSampleRate <= 0.0)
+                mixedSampleRate = sourceRate;
+
+            if (sourceRate > 0.0 && mixedSampleRate > 0.0 && !juce::approximatelyEqual(sourceRate, mixedSampleRate))
+                readBuffer = resampleBufferLinear(readBuffer, sourceRate, mixedSampleRate);
+
+            outputChannels = juce::jmax(outputChannels, readBuffer.getNumChannels());
+            outputSamples = juce::jmax(outputSamples, readBuffer.getNumSamples());
+            sourceBuffers.add(std::move(readBuffer));
+        }
+
+        if (outputSamples <= 0)
+            return juce::Result::fail("Synthesized WAV is empty");
+
+        outBuffer.setSize(outputChannels, outputSamples);
+        outBuffer.clear();
+
+        for (const auto &source : sourceBuffers)
+        {
+            for (int channel = 0; channel < outputChannels; ++channel)
+            {
+                const auto sourceChannel = juce::jmin(channel, source.getNumChannels() - 1);
+                outBuffer.addFrom(channel, 0, source, sourceChannel, 0, source.getNumSamples());
+            }
+        }
+
+        outBuffer.applyGain(1.0f / static_cast<float>(sourceBuffers.size()));
+
+        float peak = 0.0f;
+        for (int channel = 0; channel < outBuffer.getNumChannels(); ++channel)
+            peak = juce::jmax(peak, outBuffer.getMagnitude(channel, 0, outBuffer.getNumSamples()));
+
+        if (peak > 0.98f)
+            outBuffer.applyGain(0.98f / peak);
+
+        outSampleRate = mixedSampleRate > 0.0 ? mixedSampleRate : 44100.0;
+        return juce::Result::ok();
+    }
 }
 
 //==============================================================================
@@ -306,56 +376,122 @@ juce::Result VVChorusPlayerAudioProcessor::generateFromVvproj(const juce::File &
                                                               const juce::String &styleName,
                                                               const juce::String &baseUrl)
 {
+    juce::Array<voicevox::SingerStyle> singers;
+    voicevox::SingerStyle singer;
+    singer.speakerId = speakerId;
+    singer.singerName = singerName;
+    singer.styleName = styleName;
+    singers.add(std::move(singer));
+
+    return generateChorusFromVvproj(vvprojFile, trackIndex, singers, baseUrl);
+}
+
+juce::Result VVChorusPlayerAudioProcessor::generateChorusFromVvproj(const juce::File &vvprojFile,
+                                                                    int trackIndex,
+                                                                    const juce::Array<voicevox::SingerStyle> &singers,
+                                                                    const juce::String &baseUrl)
+{
+    if (!vvprojFile.existsAsFile())
+        return juce::Result::fail("vvproj file not found");
+
+    if (singers.isEmpty())
+        return juce::Result::fail("No singer selected");
+
     voicevoxProgress.store(0.0f, std::memory_order_release);
     {
         const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
-        voicevoxStatus = "Preparing VOICEVOX request";
+        voicevoxStatus = "Preparing chorus synthesis";
     }
 
-    voicevox::SynthesisOptions options;
-    options.baseUrl = baseUrl;
-    options.trackIndex = juce::jmax(0, trackIndex);
-    options.querySpeakerId = 6000;
-    options.speakerId = juce::jmax(0, speakerId);
-    options.singerName = singerName;
-    options.styleName = styleName;
-    options.maxFramesPerSegment = 2500;
-
     const auto hostSampleRate = currentHostSampleRate.load(std::memory_order_acquire);
-    options.outputSampleRate = hostSampleRate > 0.0 ? hostSampleRate : 44100.0;
+    const auto outputSampleRate = hostSampleRate > 0.0 ? hostSampleRate : 44100.0;
 
-    const auto tempOutput = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                                .getChildFile("VVChorusPlayer")
-                                .getNonexistentChildFile("voicevox_joined_", ".wav", false);
+    juce::Array<juce::File> synthesizedFiles;
+    synthesizedFiles.ensureStorageAllocated(singers.size());
 
-    const auto synthResult = voicevox::synthesizeTrackFromVvproj(
-        vvprojFile,
-        tempOutput,
-        options,
-        [this](float progress, const juce::String &status)
+    for (int singerIndex = 0; singerIndex < singers.size(); ++singerIndex)
+    {
+        const auto &singer = singers.getReference(singerIndex);
+        voicevox::SynthesisOptions options;
+        options.baseUrl = baseUrl;
+        options.trackIndex = juce::jmax(0, trackIndex);
+        options.querySpeakerId = 6000;
+        options.speakerId = juce::jmax(0, singer.speakerId);
+        options.singerName = singer.singerName;
+        options.styleName = singer.styleName;
+        options.maxFramesPerSegment = 2500;
+        options.outputSampleRate = outputSampleRate;
+
+        const auto tempOutput = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                    .getChildFile("VVChorusPlayer")
+                                    .getNonexistentChildFile("voicevox_chorus_part_", ".wav", false);
+
+        const auto synthResult = voicevox::synthesizeTrackFromVvproj(
+            vvprojFile,
+            tempOutput,
+            options,
+            [this, singerIndex, singerCount = singers.size(), singerName = singer.singerName, styleName = singer.styleName](float progress, const juce::String &status)
+            {
+                const auto overallProgress = (static_cast<float>(singerIndex) + progress) / static_cast<float>(juce::jmax(1, singerCount));
+                voicevoxProgress.store(overallProgress, std::memory_order_release);
+
+                const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
+                voicevoxStatus = "[" + juce::String(singerIndex + 1) + "/" + juce::String(singerCount) + "] "
+                                + singerName + " (" + styleName + ")\n" + status;
+            });
+
+        if (synthResult.failed())
         {
-            voicevoxProgress.store(progress, std::memory_order_release);
-            const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
-            voicevoxStatus = status;
-        });
+            tempOutput.deleteFile();
+            for (const auto &file : synthesizedFiles)
+                file.deleteFile();
 
-    if (synthResult.failed())
+            const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
+            voicevoxStatus = "Failed";
+            return juce::Result::fail("Singer " + singer.singerName + " (" + singer.styleName + "): " + synthResult.getErrorMessage());
+        }
+
+        synthesizedFiles.add(tempOutput);
+    }
+
+    voicevoxProgress.store(0.97f, std::memory_order_release);
+    {
+        const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
+        voicevoxStatus = "Merging chorus tracks";
+    }
+
+    juce::AudioBuffer<float> mixedBuffer;
+    double mixedSampleRate = outputSampleRate;
+    const auto mixResult = mixWavFilesToBuffer(synthesizedFiles, outputSampleRate, mixedBuffer, mixedSampleRate);
+
+    for (const auto &file : synthesizedFiles)
+        file.deleteFile();
+
+    if (mixResult.failed())
     {
         const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
         voicevoxStatus = "Failed";
-        return synthResult;
+        return mixResult;
     }
 
-    const auto loadResult = loadFile(tempOutput);
-    tempOutput.deleteFile();
+    {
+        const juce::SpinLock::ScopedLockType lock(loadedBufferLock);
+        loadedBuffer = std::move(mixedBuffer);
+        loadedFileName = vvprojFile.getFileNameWithoutExtension() + "_chorus.wav";
+        fileLoaded.store(true, std::memory_order_release);
+        loadedBufferSampleRate.store(mixedSampleRate, std::memory_order_release);
+    }
+
+    previewPositionSamples.store(0, std::memory_order_release);
+    previewPlaying.store(false, std::memory_order_release);
 
     voicevoxProgress.store(1.0f, std::memory_order_release);
     {
         const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
-        voicevoxStatus = loadResult.wasOk() ? "Loaded to playback buffer" : "Load generated WAV failed";
+        voicevoxStatus = "Loaded chorus to playback buffer";
     }
 
-    return loadResult;
+    return juce::Result::ok();
 }
 
 float VVChorusPlayerAudioProcessor::getVoicevoxProgress() const noexcept
