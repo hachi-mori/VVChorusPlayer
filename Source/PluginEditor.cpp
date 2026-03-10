@@ -223,7 +223,11 @@ namespace
             if (noteObj == nullptr)
                 continue;
 
-            const auto keyVar = noteObj->getProperty("key");
+            // vvproj のノート音高は noteNumber が正。key は score JSON 側の項目なのでフォールバック扱い。
+            auto keyVar = noteObj->getProperty("noteNumber");
+            if (!keyVar.isInt() && !keyVar.isInt64() && !keyVar.isDouble())
+                keyVar = noteObj->getProperty("key");
+
             if (!keyVar.isInt() && !keyVar.isInt64() && !keyVar.isDouble())
                 continue;
 
