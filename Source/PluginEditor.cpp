@@ -9,6 +9,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <thread>
+#include <algorithm>
+#include <vector>
 
 namespace
 {
@@ -121,6 +123,7 @@ namespace
 
     constexpr int autoSelectionMethodRandom = 1;
     constexpr int autoSelectionMethodVoiceQuality = 2;
+    constexpr int autoSelectionMethodRange = 3;
     constexpr int autoVoiceTypeFemale = 1;
     constexpr int autoVoiceTypeMale = 2;
     constexpr int autoVoiceTypeSoprano = 3;
@@ -154,6 +157,85 @@ namespace
         default:
             return true;
         }
+    }
+
+    bool trySelectTrackByIndex(const juce::var &song, int trackIndex, juce::var &outTrack)
+    {
+        const auto *songObj = song.getDynamicObject();
+        if (songObj == nullptr)
+            return false;
+
+        const auto tracks = songObj->getProperty("tracks");
+        const auto *tracksObj = tracks.getDynamicObject();
+        if (tracksObj == nullptr)
+            return false;
+
+        const auto trackOrder = songObj->getProperty("trackOrder");
+        if (const auto *orderArray = trackOrder.getArray(); orderArray != nullptr
+            && juce::isPositiveAndBelow(trackIndex, orderArray->size()))
+        {
+            const auto key = orderArray->getReference(trackIndex).toString();
+            const auto track = tracksObj->getProperty(key);
+            if (track.isObject())
+            {
+                outTrack = track;
+                return true;
+            }
+        }
+
+        const auto &props = tracksObj->getProperties();
+        if (!juce::isPositiveAndBelow(trackIndex, props.size()))
+            return false;
+
+        outTrack = props.getValueAt(trackIndex);
+        return outTrack.isObject();
+    }
+
+    bool tryComputeMeanPitchFromVvproj(const juce::File &vvprojFile, int trackIndex, double &outMeanKey)
+    {
+        if (!vvprojFile.existsAsFile())
+            return false;
+
+        const auto root = juce::JSON::parse(vvprojFile);
+        const auto *rootObj = root.getDynamicObject();
+        if (rootObj == nullptr)
+            return false;
+
+        const auto song = rootObj->getProperty("song");
+        juce::var track;
+        if (!trySelectTrackByIndex(song, trackIndex, track))
+            return false;
+
+        const auto *trackObj = track.getDynamicObject();
+        if (trackObj == nullptr)
+            return false;
+
+        const auto notesVar = trackObj->getProperty("notes");
+        const auto *notes = notesVar.getArray();
+        if (notes == nullptr || notes->isEmpty())
+            return false;
+
+        double sum = 0.0;
+        int count = 0;
+        for (const auto &note : *notes)
+        {
+            const auto *noteObj = note.getDynamicObject();
+            if (noteObj == nullptr)
+                continue;
+
+            const auto keyVar = noteObj->getProperty("key");
+            if (!keyVar.isInt() && !keyVar.isInt64() && !keyVar.isDouble())
+                continue;
+
+            sum += static_cast<double>(keyVar);
+            ++count;
+        }
+
+        if (count <= 0)
+            return false;
+
+        outMeanKey = sum / static_cast<double>(count);
+        return true;
     }
 
     juce::Array<int> shuffledIndices(const juce::Array<int> &sourceIndices)
@@ -351,13 +433,14 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     };
 
     addAndMakeVisible(autoSelectionMethodLabel);
-    autoSelectionMethodLabel.setText(jp(u8"選択方式"), juce::dontSendNotification);
+    autoSelectionMethodLabel.setText(jp(u8"編成方式"), juce::dontSendNotification);
     autoSelectionMethodLabel.setJustificationType(juce::Justification::centredLeft);
 
     addAndMakeVisible(autoSelectionMethodCombo);
+    autoSelectionMethodCombo.addItem(jp(u8"オート"), autoSelectionMethodRange);
     autoSelectionMethodCombo.addItem(jp(u8"ランダム"), autoSelectionMethodRandom);
-    autoSelectionMethodCombo.addItem(jp(u8"声質"), autoSelectionMethodVoiceQuality);
-    autoSelectionMethodCombo.setSelectedId(autoSelectionMethodRandom, juce::dontSendNotification);
+    autoSelectionMethodCombo.addItem(jp(u8"パート別"), autoSelectionMethodVoiceQuality);
+    autoSelectionMethodCombo.setSelectedId(autoSelectionMethodRange, juce::dontSendNotification);
     autoSelectionMethodCombo.onChange = [this]
     {
         updateSelectionModeUi();
@@ -367,7 +450,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     autoSelectionMethodCombo.setEnabled(false);
 
     addAndMakeVisible(autoVoiceTypeLabel);
-    autoVoiceTypeLabel.setText(jp(u8"声質タイプ"), juce::dontSendNotification);
+    autoVoiceTypeLabel.setText(jp(u8"パート"), juce::dontSendNotification);
     autoVoiceTypeLabel.setJustificationType(juce::Justification::centredLeft);
 
     addAndMakeVisible(autoVoiceTypeCombo);
@@ -877,6 +960,47 @@ juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getAutoSe
 
         for (int i = 0; i < shuffledFallback.size() && selected.size() < targetCount; ++i)
             selected.add(availableSingers.getReference(shuffledFallback[i]));
+    }
+    else if (methodId == autoSelectionMethodRange)
+    {
+        constexpr double referenceG4 = 67.0;
+        double meanKey = referenceG4;
+        const auto hasMean = tryComputeMeanPitchFromVvproj(selectedVvprojFile, 0, meanKey);
+        const auto requiredShift = static_cast<int>(std::lround((hasMean ? meanKey : referenceG4) - referenceG4));
+
+        struct Candidate
+        {
+            int index = 0;
+            int score = 0;
+            int tieOrder = 0;
+        };
+
+        const auto shuffled = shuffledIndices(allIndices);
+        std::vector<Candidate> candidates;
+        candidates.reserve(static_cast<size_t>(shuffled.size()));
+        for (int i = 0; i < shuffled.size(); ++i)
+        {
+            const auto singerIndex = shuffled[i];
+            const auto &singer = availableSingers.getReference(singerIndex);
+            const auto singerShift = getSingerKeyAdjustment(singer);
+            const auto score = std::abs(requiredShift - singerShift);
+            candidates.push_back({singerIndex, score, i});
+        }
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const Candidate &a, const Candidate &b)
+                  {
+                      if (a.score != b.score)
+                          return a.score < b.score;
+                      return a.tieOrder < b.tieOrder;
+                  });
+
+        for (const auto &candidate : candidates)
+        {
+            if (selected.size() >= targetCount)
+                break;
+            selected.add(availableSingers.getReference(candidate.index));
+        }
     }
     else
     {
