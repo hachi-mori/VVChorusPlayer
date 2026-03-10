@@ -73,8 +73,6 @@ private:
   juce::ComboBox autoVoiceTypeCombo;
   juce::Label autoSingerCountLabel;
   juce::Slider autoSingerCountSlider;
-  juce::Label autoPanWidthLabel;
-  juce::Slider autoPanWidthSlider;
   juce::ToggleButton showAllStylesToggle;
   std::unique_ptr<StyleSwitchLookAndFeel> showAllStylesToggleLookAndFeel;
   std::unique_ptr<ControlButtonLookAndFeel> controlButtonLookAndFeel;
