@@ -10,6 +10,7 @@ struct SingerStyle
     juce::String singerName;
     juce::String styleName;
     int speakerId { 6000 };
+    int keyShiftOffset { 0 };
 };
 
 struct SynthesisOptions
@@ -19,6 +20,7 @@ struct SynthesisOptions
     int speakerId { 6000 };
     juce::String singerName;
     juce::String styleName;
+    int keyShiftOffset { 0 };
     int trackIndex { 0 };
     int maxFramesPerSegment { 2500 };
     double outputSampleRate { 44100.0 };

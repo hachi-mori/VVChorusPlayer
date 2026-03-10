@@ -118,6 +118,90 @@ namespace
     {
         return juce::jlimit(14.0f, 18.0f, static_cast<float>(buttonHeight) * 0.56f);
     }
+
+    constexpr int autoSelectionMethodRandom = 1;
+    constexpr int autoSelectionMethodVoiceQuality = 2;
+    constexpr int autoVoiceTypeFemale = 1;
+    constexpr int autoVoiceTypeMale = 2;
+    constexpr int autoVoiceTypeSoprano = 3;
+    constexpr int autoVoiceTypeAlto = 4;
+    constexpr int autoVoiceTypeTenor = 5;
+    constexpr int autoVoiceTypeBass = 6;
+
+    int getSingerKeyAdjustment(const voicevox::SingerStyle &singer)
+    {
+        return voicevox::getKeyAdjustment(singer.singerName, singer.styleName);
+    }
+
+    bool matchesVoiceTypeSelection(const voicevox::SingerStyle &singer, int voiceTypeId)
+    {
+        const auto keyShift = getSingerKeyAdjustment(singer);
+
+        switch (voiceTypeId)
+        {
+        case autoVoiceTypeFemale:
+            return keyShift >= -11;
+        case autoVoiceTypeMale:
+            return keyShift <= -12;
+        case autoVoiceTypeSoprano:
+            return keyShift >= -4;
+        case autoVoiceTypeAlto:
+            return keyShift >= -11 && keyShift <= -5;
+        case autoVoiceTypeTenor:
+            return keyShift >= -19 && keyShift <= -12;
+        case autoVoiceTypeBass:
+            return keyShift <= -20;
+        default:
+            return true;
+        }
+    }
+
+    juce::Array<int> shuffledIndices(const juce::Array<int> &sourceIndices)
+    {
+        juce::Array<int> shuffled(sourceIndices);
+        auto &random = juce::Random::getSystemRandom();
+        for (int i = shuffled.size() - 1; i > 0; --i)
+        {
+            const auto swapIndex = random.nextInt(i + 1);
+            shuffled.swap(i, swapIndex);
+        }
+        return shuffled;
+    }
+
+    void assignKeyShiftOffsetsToReduceCollisions(juce::Array<voicevox::SingerStyle> &singers)
+    {
+        juce::Array<int> usedShifts;
+        usedShifts.ensureStorageAllocated(singers.size());
+
+        const int adjustmentCandidates[] = {1, -1, 2, -2};
+        for (auto &singer : singers)
+        {
+            const auto baseShift = voicevox::getKeyAdjustment(singer.singerName, singer.styleName);
+            singer.keyShiftOffset = 0;
+
+            if (!usedShifts.contains(baseShift))
+            {
+                usedShifts.add(baseShift);
+                continue;
+            }
+
+            bool assigned = false;
+            for (const auto delta : adjustmentCandidates)
+            {
+                const auto candidate = baseShift + delta;
+                if (usedShifts.contains(candidate))
+                    continue;
+
+                singer.keyShiftOffset = delta;
+                usedShifts.add(candidate);
+                assigned = true;
+                break;
+            }
+
+            if (!assigned)
+                usedShifts.add(baseShift);
+        }
+    }
 }
 
 class VVChorusPlayerAudioProcessorEditor::StyleSwitchLookAndFeel : public juce::LookAndFeel_V4
@@ -271,9 +355,35 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     autoSelectionMethodLabel.setJustificationType(juce::Justification::centredLeft);
 
     addAndMakeVisible(autoSelectionMethodCombo);
-    autoSelectionMethodCombo.addItem(jp(u8"ランダム"), 1);
-    autoSelectionMethodCombo.setSelectedId(1, juce::dontSendNotification);
+    autoSelectionMethodCombo.addItem(jp(u8"ランダム"), autoSelectionMethodRandom);
+    autoSelectionMethodCombo.addItem(jp(u8"声質"), autoSelectionMethodVoiceQuality);
+    autoSelectionMethodCombo.setSelectedId(autoSelectionMethodRandom, juce::dontSendNotification);
+    autoSelectionMethodCombo.onChange = [this]
+    {
+        updateSelectionModeUi();
+        updateActionState();
+        resized();
+    };
     autoSelectionMethodCombo.setEnabled(false);
+
+    addAndMakeVisible(autoVoiceTypeLabel);
+    autoVoiceTypeLabel.setText(jp(u8"声質タイプ"), juce::dontSendNotification);
+    autoVoiceTypeLabel.setJustificationType(juce::Justification::centredLeft);
+
+    addAndMakeVisible(autoVoiceTypeCombo);
+    autoVoiceTypeCombo.addItem(jp(u8"女声"), autoVoiceTypeFemale);
+    autoVoiceTypeCombo.addItem(jp(u8"男声"), autoVoiceTypeMale);
+    autoVoiceTypeCombo.addItem(jp(u8"ソプラノ"), autoVoiceTypeSoprano);
+    autoVoiceTypeCombo.addItem(jp(u8"アルト"), autoVoiceTypeAlto);
+    autoVoiceTypeCombo.addItem(jp(u8"テノール"), autoVoiceTypeTenor);
+    autoVoiceTypeCombo.addItem(jp(u8"バス"), autoVoiceTypeBass);
+    autoVoiceTypeCombo.setSelectedId(autoVoiceTypeFemale, juce::dontSendNotification);
+    autoVoiceTypeCombo.onChange = [this]
+    {
+        updateActionState();
+        resized();
+    };
+    autoVoiceTypeCombo.setEnabled(false);
 
     addAndMakeVisible(autoSingerCountLabel);
     autoSingerCountLabel.setText(jp(u8"合唱人数"), juce::dontSendNotification);
@@ -619,6 +729,7 @@ void VVChorusPlayerAudioProcessorEditor::syncSelectionModeFromTab()
 void VVChorusPlayerAudioProcessorEditor::updateSelectionModeUi()
 {
     const auto isManual = singerSelectionMode == SingerSelectionMode::manual;
+    const auto isVoiceQualityMode = autoSelectionMethodCombo.getSelectedId() == autoSelectionMethodVoiceQuality;
 
     singerSelectionLabel.setVisible(isManual);
     singerListBox.setVisible(isManual);
@@ -628,6 +739,8 @@ void VVChorusPlayerAudioProcessorEditor::updateSelectionModeUi()
 
     autoSelectionMethodLabel.setVisible(!isManual);
     autoSelectionMethodCombo.setVisible(!isManual);
+    autoVoiceTypeLabel.setVisible(!isManual && isVoiceQualityMode);
+    autoVoiceTypeCombo.setVisible(!isManual && isVoiceQualityMode);
     autoSingerCountLabel.setVisible(!isManual);
     autoSingerCountSlider.setVisible(!isManual);
     autoPanWidthLabel.setVisible(!isManual);
@@ -719,22 +832,60 @@ juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getAutoSe
         return selected;
 
     const auto requestedCount = static_cast<int>(std::lround(autoSingerCountSlider.getValue()));
-    const auto targetCount = juce::jlimit(1, availableSingers.size(), requestedCount);
-
-    juce::Array<int> indices;
-    indices.ensureStorageAllocated(availableSingers.size());
-    for (int i = 0; i < availableSingers.size(); ++i)
-        indices.add(i);
-
-    auto &random = juce::Random::getSystemRandom();
-    for (int i = indices.size() - 1; i > 0; --i)
+    auto maxSelectableCount = availableSingers.size();
+    const auto methodId = autoSelectionMethodCombo.getSelectedId();
+    if (methodId == autoSelectionMethodVoiceQuality)
     {
-        const auto swapIndex = random.nextInt(i + 1);
-        indices.swap(i, swapIndex);
+        const auto selectedVoiceTypeId = autoVoiceTypeCombo.getSelectedId();
+        int preferredCount = 0;
+        for (const auto &singer : availableSingers)
+            if (matchesVoiceTypeSelection(singer, selectedVoiceTypeId))
+                ++preferredCount;
+
+        maxSelectableCount = preferredCount;
     }
 
-    for (int i = 0; i < targetCount; ++i)
-        selected.add(availableSingers.getReference(indices[i]));
+    if (maxSelectableCount <= 0)
+        return selected;
+
+    const auto targetCount = juce::jlimit(1, maxSelectableCount, requestedCount);
+
+    juce::Array<int> allIndices;
+    allIndices.ensureStorageAllocated(availableSingers.size());
+    for (int i = 0; i < availableSingers.size(); ++i)
+        allIndices.add(i);
+
+    if (methodId == autoSelectionMethodVoiceQuality)
+    {
+        juce::Array<int> preferredIndices;
+        juce::Array<int> fallbackIndices;
+        preferredIndices.ensureStorageAllocated(availableSingers.size());
+        fallbackIndices.ensureStorageAllocated(availableSingers.size());
+
+        const auto selectedVoiceTypeId = autoVoiceTypeCombo.getSelectedId();
+        for (int i = 0; i < availableSingers.size(); ++i)
+        {
+            const auto &singer = availableSingers.getReference(i);
+            (matchesVoiceTypeSelection(singer, selectedVoiceTypeId) ? preferredIndices : fallbackIndices).add(i);
+        }
+
+        const auto shuffledPreferred = shuffledIndices(preferredIndices);
+        const auto shuffledFallback = shuffledIndices(fallbackIndices);
+
+        for (int i = 0; i < shuffledPreferred.size() && selected.size() < targetCount; ++i)
+            selected.add(availableSingers.getReference(shuffledPreferred[i]));
+
+        for (int i = 0; i < shuffledFallback.size() && selected.size() < targetCount; ++i)
+            selected.add(availableSingers.getReference(shuffledFallback[i]));
+    }
+    else
+    {
+        const auto shuffled = shuffledIndices(allIndices);
+        for (int i = 0; i < shuffled.size() && selected.size() < targetCount; ++i)
+            selected.add(availableSingers.getReference(shuffled[i]));
+    }
+
+    assignKeyShiftOffsetsToReduceCollisions(selected);
 
     return selected;
 }
@@ -827,20 +978,53 @@ void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Arr
 void VVChorusPlayerAudioProcessorEditor::updateActionState()
 {
     const auto isManualMode = singerSelectionMode == SingerSelectionMode::manual;
-    const auto hasSingerSelection = isManualMode
-                                        ? !selectedSpeakerIds.isEmpty()
-                                        : !availableSingers.isEmpty();
+    bool hasSingerSelection = false;
+    if (isManualMode)
+    {
+        hasSingerSelection = !selectedSpeakerIds.isEmpty();
+    }
+    else if (autoSelectionMethodCombo.getSelectedId() == autoSelectionMethodVoiceQuality)
+    {
+        const auto selectedVoiceTypeId = autoVoiceTypeCombo.getSelectedId();
+        for (const auto &singer : availableSingers)
+        {
+            if (matchesVoiceTypeSelection(singer, selectedVoiceTypeId))
+            {
+                hasSingerSelection = true;
+                break;
+            }
+        }
+    }
+    else
+    {
+        hasSingerSelection = !availableSingers.isEmpty();
+    }
+
     const auto hasVvproj = selectedVvprojFile.existsAsFile();
     const auto isUiLocked = isVoicevoxUnavailable;
     const auto canGenerate = !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && hasSingerSelection && hasVvproj;
 
     if (!isManualMode)
     {
-        const auto maxCount = juce::jmax(1, availableSingers.size());
+        auto maxCount = availableSingers.size();
+        if (autoSelectionMethodCombo.getSelectedId() == autoSelectionMethodVoiceQuality)
+        {
+            const auto selectedVoiceTypeId = autoVoiceTypeCombo.getSelectedId();
+            int groupCount = 0;
+            for (const auto &singer : availableSingers)
+                if (matchesVoiceTypeSelection(singer, selectedVoiceTypeId))
+                    ++groupCount;
+            maxCount = groupCount;
+        }
+
+        maxCount = juce::jmax(1, maxCount);
+        const auto effectiveMaxCount = maxCount;
         const auto sliderMax = juce::jmax(2, maxCount);
         autoSingerCountSlider.setRange(1.0, static_cast<double>(sliderMax), 1.0);
         if (autoSingerCountSlider.getValue() > maxCount)
             autoSingerCountSlider.setValue(static_cast<double>(maxCount), juce::dontSendNotification);
+
+        autoSingerCountSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && effectiveMaxCount > 1);
     }
 
     selectionModeTabs.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
@@ -850,7 +1034,10 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
     clearSingerSelectionButton.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !selectedSpeakerIds.isEmpty());
     showAllStylesToggle.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     autoSelectionMethodCombo.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
-    autoSingerCountSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && availableSingers.size() > 1);
+    autoVoiceTypeCombo.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox
+                                  && autoSelectionMethodCombo.getSelectedId() == autoSelectionMethodVoiceQuality);
+    if (isManualMode)
+        autoSingerCountSlider.setEnabled(false);
     autoPanWidthSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     selectVvprojButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     generateVoicevoxButton.setEnabled(canGenerate);
@@ -894,11 +1081,15 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
     singerSelectionLabel.setColour(juce::Label::textColourId, text);
     singerSelectionLabel.setColour(juce::Label::outlineColourId, border);
     autoSelectionMethodLabel.setColour(juce::Label::textColourId, text);
+    autoVoiceTypeLabel.setColour(juce::Label::textColourId, text);
     autoSingerCountLabel.setColour(juce::Label::textColourId, text);
     autoPanWidthLabel.setColour(juce::Label::textColourId, text);
     autoSelectionMethodCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
     autoSelectionMethodCombo.setColour(juce::ComboBox::textColourId, text);
     autoSelectionMethodCombo.setColour(juce::ComboBox::outlineColourId, border);
+    autoVoiceTypeCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
+    autoVoiceTypeCombo.setColour(juce::ComboBox::textColourId, text);
+    autoVoiceTypeCombo.setColour(juce::ComboBox::outlineColourId, border);
     autoSingerCountSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.2f));
     autoSingerCountSlider.setColour(juce::Slider::rotarySliderOutlineColourId, accentSoft.darker(0.05f));
     autoSingerCountSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.32f));
@@ -1166,6 +1357,7 @@ void VVChorusPlayerAudioProcessorEditor::resized()
     previewLabel.setFont(uiFont);
     singerSelectionLabel.setFont(uiFont);
     autoSelectionMethodLabel.setFont(uiFont);
+    autoVoiceTypeLabel.setFont(uiFont);
     autoSingerCountLabel.setFont(uiFont);
     autoPanWidthLabel.setFont(uiFont);
     selectedVvprojLabel.setFont(uiFont);
@@ -1224,6 +1416,8 @@ void VVChorusPlayerAudioProcessorEditor::resized()
             showAllStylesToggle.setBounds(row.removeFromRight(buttonWidth));
             autoSelectionMethodLabel.setBounds({});
             autoSelectionMethodCombo.setBounds({});
+            autoVoiceTypeLabel.setBounds({});
+            autoVoiceTypeCombo.setBounds({});
             autoSingerCountLabel.setBounds({});
             autoSingerCountSlider.setBounds({});
             autoPanWidthLabel.setBounds({});
@@ -1267,7 +1461,30 @@ void VVChorusPlayerAudioProcessorEditor::resized()
             methodGroup.removeFromLeft(methodGap);
             autoSelectionMethodCombo.setBounds(methodGroup);
         }
-        area.removeFromTop(spacing);
+        area.removeFromTop(spacing / 2);
+
+        if (autoSelectionMethodCombo.getSelectedId() == autoSelectionMethodVoiceQuality)
+        {
+            auto row = area.removeFromTop(controlHeight);
+            const auto voiceLabelWidth = juce::jlimit(84, 130, static_cast<int>(labelWidth * 0.48));
+            const auto voiceComboWidth = juce::jlimit(180, 260, static_cast<int>(getWidth() / 3.5));
+            const auto voiceGap = juce::jmax(8, spacing / 2);
+            const auto voiceGroupWidth = voiceLabelWidth + voiceGap + voiceComboWidth;
+            const auto desiredVoiceX = getLocalBounds().getCentreX() - voiceGroupWidth / 2;
+            const auto voiceGroupX = juce::jlimit(row.getX(), juce::jmax(row.getX(), row.getRight() - voiceGroupWidth), desiredVoiceX);
+            auto voiceGroup = juce::Rectangle<int>(voiceGroupX, row.getY(), voiceGroupWidth, row.getHeight());
+
+            autoVoiceTypeLabel.setBounds(voiceGroup.removeFromLeft(voiceLabelWidth));
+            voiceGroup.removeFromLeft(voiceGap);
+            autoVoiceTypeCombo.setBounds(voiceGroup);
+            area.removeFromTop(spacing / 2);
+        }
+        else
+        {
+            autoVoiceTypeLabel.setBounds({});
+            autoVoiceTypeCombo.setBounds({});
+            area.removeFromTop(spacing / 2);
+        }
 
         const auto knobAreaHeight = juce::jlimit(118, 170, getHeight() / 5);
         auto knobsArea = area.removeFromTop(knobAreaHeight);

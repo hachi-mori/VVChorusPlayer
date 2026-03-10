@@ -69,6 +69,8 @@ private:
   juce::TextButton clearSingerSelectionButton;
   juce::Label autoSelectionMethodLabel;
   juce::ComboBox autoSelectionMethodCombo;
+  juce::Label autoVoiceTypeLabel;
+  juce::ComboBox autoVoiceTypeCombo;
   juce::Label autoSingerCountLabel;
   juce::Slider autoSingerCountSlider;
   juce::Label autoPanWidthLabel;

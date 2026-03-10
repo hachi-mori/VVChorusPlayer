@@ -442,6 +442,7 @@ juce::Result VVChorusPlayerAudioProcessor::generateChorusFromVvproj(const juce::
         options.speakerId = juce::jmax(0, singer.speakerId);
         options.singerName = singer.singerName;
         options.styleName = singer.styleName;
+        options.keyShiftOffset = singer.keyShiftOffset;
         options.maxFramesPerSegment = 2500;
         options.outputSampleRate = outputSampleRate;
 

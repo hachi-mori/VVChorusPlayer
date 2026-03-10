@@ -709,7 +709,7 @@ juce::Result synthesizeTrackFromVvproj (const juce::File& vvprojFile,
 
     reportProgress (progressCallback, 0.12f, "Split score into " + juce::String (segments.size()) + " segments");
 
-    const auto keyShift = getKeyAdjustment (options.singerName, options.styleName);
+    const auto keyShift = getKeyAdjustment (options.singerName, options.styleName) + options.keyShiftOffset;
     if (keyShift != 0)
     {
         for (auto& segment : segments)
