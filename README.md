@@ -1,86 +1,89 @@
-# VVChorusPlayer
-
-> 現在のベース実装名： **VVProject Synth**  
-> 将来的に「複数キャラ合唱対応」へ発展させるための開発プロジェクトです。
-
----
+﻿# VVChorusPlayer
 
 ## ✨ これは何？
 
-**VOICEVOX のプロジェクトファイル「 `.vvproj`」 を直接読み込み、  
-DAW内で歌声を生成・再生できる VST3 プラグインです。**
+**VOICEVOX プロジェクトファイル（`.vvproj`）を直接読み込み、
+複数キャラの合唱音声を生成・再生できる VST3 プラグイン／スタンドアロンアプリ** です。
 
-DAW上で使いやすいワークフローを目指し、   
-「キャラ選択 → 生成 → 再生 → 書き出し」までをシンプルに扱える構成になっています。
-
----
+歌唱キャラの自動編成（オート/ランダム/パート別）に対応し、合唱向けのキャラ選定と歌声生成を素早く行えます。
 
 ## 🎯 できること
 
-- `.vvproj` のソングトラック読み込み
-- 歌唱キャラクター／スタイル選択
-- VOICEVOX Engine API による歌声生成
-- プレビュー再生
+- `.vvproj` の読み込み（歌トラック）
+- 複数キャラによる合唱生成
+- 手動選択モード
+- 自動編成モード（`オート` / `ランダム` / `パート別`）
+- パート別選択（`女声` / `男声` / `ソプラノ` / `アルト` / `テノール` / `バス`）
+- 歌唱キャラ数の指定
+- キャラの音域調整量に基づく合成
+- 楽譜音域に応じた動的オクターブ補正
+- プレビュー再生 / 停止
 - WAV書き出し
-
----
 
 ## ⚙ 動作に必要なもの
 
-- ソングトラックに楽譜情報が格納されたVOICEVOXプロジェクトファイル（`.vvproj`）
-- 本プラグイン：[リリース](https://github.com/hachi-mori/VVChorusPlayer/releases/tag/vvps-v1.0.0)からVST3形式でDLできます
-- VST3対応DAW
-- VOICEVOX Engine が起動していること  
-  （[VOICEVOX](https://voicevox.hiroshiba.jp/)をインストールし、ローカルで起動してください）
-
----
+- ソングトラックに楽譜情報が入った VOICEVOX プロジェクトファイル（`.vvproj`）
+- 本プラグイン（VST3）／本アプリ（スタンドアロン）
+  - リリース: https://github.com/hachi-mori/VVChorusPlayer/releases
+- VST3を使用する場合は VST3に対応しているDAW
+- VOICEVOX Engine が起動していること
+  - https://voicevox.hiroshiba.jp/
 
 ## 🚀 使い方（クイックスタート）
 
+※ スクリーンショットは後で追記予定です。
+
 ## ① VOICEVOX を起動
-<img width="1024" height="630" alt="image" src="https://github.com/user-attachments/assets/30344115-1d30-425b-9250-3a2751db4f4e" />
 
----
+VOICEVOX（または VOICEVOX Engine）をローカルで起動します。
 
-## ② DAWでプラグインを開く
-<img width="782" height="758" alt="image" src="https://github.com/user-attachments/assets/e4749118-37b1-41c1-998c-a6e3f0d57007" />
 
----
+## ② DAW でプラグインを開く
+
+DAW のトラックに `VVChorusPlayer` を挿入します。
+
 
 ## ③ `.vvproj` を選択
-<img width="770" height="268" alt="image" src="https://github.com/user-attachments/assets/f46ff726-5634-4850-950a-a1c979b46a12" />
 
----
+`vvprojを選択` ボタンから対象ファイルを読み込みます。
 
-## ④ キャラクターを選択
-<img width="753" height="434" alt="image" src="https://github.com/user-attachments/assets/f0ab04d8-71e5-495d-b4cf-05f53dc2c2ca" />
 
-> 💡 **TIP**  
-> 「表示」ボタンで「全スタイル表示／先頭スタイルのみ」を切り替えられます  
-<img width="390" height="51" alt="image" src="https://github.com/user-attachments/assets/ffedfd4e-48a8-4903-a4f5-ae1af3347331" />
+## ④ 歌唱キャラクターを選ぶ
 
----
+`手動選択` または `自動編成` を選びます。
+
+- 手動選択
+  - キャラ一覧から任意数をチェックして選択
+  - `表示` トグルで `全スタイル表示 / 先頭のみ` を切り替え可能
+- 自動編成
+  - `編成方式` を選択（`オート` / `ランダム` / `パート別`）
+  - `パート別` 選択時は `パート` を選択
+  - `歌唱人数` を指定
+
 
 ## ⑤ 歌声を生成
-<img width="741" height="278" alt="image" src="https://github.com/user-attachments/assets/b2a8d578-3bb5-48d4-8c61-3640e1b359f9" />
 
----
+`生成スタート` を押して合唱音声を生成します。
+生成ログ欄に進捗が表示されます。
 
 ## ⑥ プレビュー再生
-<img width="732" height="230" alt="image" src="https://github.com/user-attachments/assets/618a495d-e61b-475a-aeb6-3bb1f672fac4" />
 
----
+`再生` / `停止` で確認できます。
+下部に再生位置スライダーと波形が表示されます。
 
-## ⑦ 必要に応じて WAV 書き出し
-<img width="632" height="296" alt="image" src="https://github.com/user-attachments/assets/61f8abe0-f8b0-4338-83e8-e6f1b8518a38" />
+## ⑦ WAV 書き出し
 
----
+`生成した歌声をWAVで書き出し` からファイル保存します。
+
 
 ## 🔎 現在の仕様メモ
 
-- 読み込んだ `.vvproj` の **1トラック目のみ** が対象
-- 音域調整量は各キャラクター／スタイルのデフォルト値を使用  
-  →https://github.com/Hiroshiba/voicevox/blob/89e31d1e9e7ae3a2eb4a93ac02c6c483dc1d1070/src/sing/workaroundKeyRangeAdjustment.ts
+- 読み込んだ `.vvproj` は **1トラック目** を対象にします
+- 自動編成では先頭スタイル（ノーマル歌唱）を使用します
+- 自動でパン配置の調整を行います
+- 音域調整量は `Source/keyshift_table.json` を参照します
+- 同一音域調整量が重なりすぎないよう、必要に応じて軽微なオフセットを加えます
+- 入力楽譜の平均音高とキャラ音域を照合し、必要に応じて動的オクターブ補正を行います
 
 ---
 
@@ -93,9 +96,8 @@ DAW上で使いやすいワークフローを目指し、
 
 ---
 
-## 🎼 今後の構想：VVChorusPlayer
+## 📄 仕様ドキュメント
 
-- 複数キャラによる合唱生成
-  - パート管理の強化
-  - 歌のばらつきをパラメータとして管理
-  - コーラス特化UIの再設計
+詳細仕様のドラフトは以下を参照してください。
+
+- `docs/chorusplayer-spec-draft.md`

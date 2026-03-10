@@ -665,8 +665,11 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         else
         {
             selectedSingers = getAutoSelectedSingers();
-            panPositions = buildPanPositions(selectedSingers.size());
         }
+
+        // 手動/自動どちらでも、合唱としての広がりと被り回避を自動適用する。
+        assignKeyShiftOffsetsToReduceCollisions(selectedSingers);
+        panPositions = buildPanPositions(selectedSingers.size());
 
         if (selectedSingers.isEmpty())
         {
@@ -995,8 +998,6 @@ juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getAutoSe
         for (int i = 0; i < shuffled.size() && selected.size() < targetCount; ++i)
             selected.add(availableSingers.getReference(shuffled[i]));
     }
-
-    assignKeyShiftOffsetsToReduceCollisions(selected);
 
     return selected;
 }
