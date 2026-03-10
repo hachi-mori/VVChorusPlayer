@@ -284,6 +284,40 @@ void transposeQueryVar (juce::var& query, int semitone)
     }
 }
 
+bool tryComputeMeanMidiKeyFromScoreVar (const juce::var& score, double& outMeanKey)
+{
+    const auto* scoreObj = score.getDynamicObject();
+    if (scoreObj == nullptr)
+        return false;
+
+    const auto notes = scoreObj->getProperty ("notes");
+    const auto* noteArray = notes.getArray();
+    if (noteArray == nullptr || noteArray->isEmpty())
+        return false;
+
+    double sum = 0.0;
+    int count = 0;
+    for (const auto& note : *noteArray)
+    {
+        const auto* noteObj = note.getDynamicObject();
+        if (noteObj == nullptr)
+            continue;
+
+        const auto keyVar = noteObj->getProperty ("key");
+        if (! keyVar.isInt() && ! keyVar.isInt64() && ! keyVar.isDouble())
+            continue;
+
+        sum += static_cast<double> (keyVar);
+        ++count;
+    }
+
+    if (count <= 0)
+        return false;
+
+    outMeanKey = sum / static_cast<double> (count);
+    return true;
+}
+
 juce::Result postBinary (const juce::URL& url, const juce::String& body, int timeoutMs, juce::MemoryBlock& data)
 {
     int statusCode = 0;
@@ -710,16 +744,31 @@ juce::Result synthesizeTrackFromVvproj (const juce::File& vvprojFile,
     reportProgress (progressCallback, 0.12f, "Split score into " + juce::String (segments.size()) + " segments");
 
     const auto keyShift = getKeyAdjustment (options.singerName, options.styleName) + options.keyShiftOffset;
-    if (keyShift != 0)
+    int dynamicOctaveSemitone = 0;
+    double meanMidiKey = 0.0;
+    if (tryComputeMeanMidiKeyFromScoreVar (score, meanMidiKey))
+    {
+        constexpr double referenceG4 = 67.0;
+        const auto singerReference = referenceG4 + static_cast<double> (keyShift);
+        const auto diff = meanMidiKey - singerReference;
+        const auto octaveSteps = juce::jlimit (-2, 2, static_cast<int> (std::lround (diff / 12.0)));
+        dynamicOctaveSemitone = -octaveSteps * 12;
+
+        juce::Logger::writeToLog ("Dynamic octave shift: meanKey=" + juce::String (meanMidiKey, 2)
+                                  + ", keyShift=" + juce::String (keyShift)
+                                  + ", octaveSteps=" + juce::String (octaveSteps)
+                                  + ", octaveSemitone=" + juce::String (dynamicOctaveSemitone));
+    }
+    else
+    {
+        juce::Logger::writeToLog ("Dynamic octave shift skipped: score mean key unavailable");
+    }
+
+    const auto scoreTransposeSemitone = -keyShift + dynamicOctaveSemitone;
+    if (scoreTransposeSemitone != 0)
     {
         for (auto& segment : segments)
-        {
-            if (keyShift < -12)
-                transposeScoreVar (segment, -12);
-            if (keyShift < -20)
-                transposeScoreVar (segment, -12);
-            transposeScoreVar (segment, -keyShift);
-        }
+            transposeScoreVar (segment, scoreTransposeSemitone);
     }
 
     const auto queryBase = options.baseUrl + "/sing_frame_audio_query?speaker=" + juce::String (options.querySpeakerId);
