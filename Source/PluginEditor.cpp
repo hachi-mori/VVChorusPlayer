@@ -21,22 +21,51 @@ namespace
     {
         const auto names = juce::Font::findAllTypefaceNames();
 
-        const juce::StringArray preferredPatterns{
-            "Rounded M+ 1c",
-            "Rounded M+ 1m",
-            "Rounded M+",
-            "Rounded Mplus",
-            "M PLUS Rounded 1c",
-            "M PLUS Rounded 1m",
-            "M PLUS Rounded",
-            "M+ 1c"};
+        const juce::StringArray preferredNames{
+            "Meiryo UI",
+            "Yu Gothic UI",
+            "Noto Sans JP",
+            "MS UI Gothic",
+            "Segoe UI",
+            "Meiryo",
+            "Yu Gothic"};
 
-        for (const auto &pattern : preferredPatterns)
+        for (const auto &preferred : preferredNames)
             for (const auto &name : names)
-                if (name.containsIgnoreCase(pattern))
+                if (name.equalsIgnoreCase(preferred))
                     return name;
 
         return {};
+    }
+
+    const juce::String &resolvedUiFontName()
+    {
+        static const juce::String cached = pickUiFontName();
+        return cached;
+    }
+
+    juce::Font makeUiFont(float size, bool bold = false)
+    {
+        const auto &uiFont = resolvedUiFontName();
+        const auto styleFlags = bold ? juce::Font::bold : juce::Font::plain;
+        juce::Font font;
+
+        if (uiFont.isNotEmpty())
+            font = juce::Font(uiFont, size, styleFlags);
+        else
+            font = juce::Font(size, styleFlags);
+
+        return font;
+    }
+
+    int titlePaddingTop(int height)
+    {
+        return juce::jlimit(2, 6, height / 220);
+    }
+
+    int titlePaddingBottom(int height)
+    {
+        return juce::jlimit(2, 7, height / 180);
     }
 
     juce::String makeProgressBar(int percent, int width)
@@ -84,6 +113,11 @@ namespace
 
         speakerIds.removeFirstMatchingValue(speakerId);
     }
+
+    float controlButtonFontSize(int buttonHeight)
+    {
+        return juce::jlimit(14.0f, 18.0f, static_cast<float>(buttonHeight) * 0.56f);
+    }
 }
 
 class VVChorusPlayerAudioProcessorEditor::StyleSwitchLookAndFeel : public juce::LookAndFeel_V4
@@ -118,7 +152,8 @@ public:
                                                juce::jmax(0.0f, trackArea.getX() - bounds.getX() - labelRightPadding),
                                                bounds.getHeight());
         g.setColour(textColour);
-        g.setFont(juce::Font(juce::FontOptions(14.0f)).boldened());
+        const auto mainFontSize = controlButtonFontSize(button.getHeight());
+        g.setFont(makeUiFont(mainFontSize, true));
         g.drawFittedText(button.getButtonText(), labelArea.toNearestInt(), juce::Justification::centredRight, 1);
 
         const auto corner = trackArea.getHeight() * 0.5f;
@@ -127,7 +162,7 @@ public:
 
         g.setColour(juce::Colours::white.withMultipliedAlpha(enabledAlpha * 0.95f));
         const auto stateText = isOn ? jp(u8"全スタイル") : jp(u8"先頭のみ");
-        g.setFont(juce::Font(juce::FontOptions(12.0f)).boldened());
+        g.setFont(makeUiFont(juce::jmax(12.0f, mainFontSize - 2.0f), true));
         g.drawFittedText(stateText, trackArea.toNearestInt(), juce::Justification::centred, 1);
 
         const auto knobMargin = 3.0f;
@@ -144,19 +179,41 @@ public:
     }
 };
 
+class VVChorusPlayerAudioProcessorEditor::ControlButtonLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    juce::Font getTextButtonFont(juce::TextButton &, int buttonHeight) override
+    {
+        return makeUiFont(controlButtonFontSize(buttonHeight), false);
+    }
+};
+
 //==============================================================================
 VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusPlayerAudioProcessor &p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
-    if (const auto uiFont = pickUiFontName(); uiFont.isNotEmpty())
+    if (const auto uiFont = resolvedUiFontName(); uiFont.isNotEmpty())
         juce::LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypefaceName(uiFont);
+
+    controlButtonLookAndFeel = std::make_unique<ControlButtonLookAndFeel>();
 
     selectVvprojButton.setButtonText(jp(u8"vvprojを選択"));
     generateVoicevoxButton.setButtonText(jp(u8"生成スタート"));
+    selectAllSingersButton.setLookAndFeel(controlButtonLookAndFeel.get());
+    clearSingerSelectionButton.setLookAndFeel(controlButtonLookAndFeel.get());
+    selectVvprojButton.setLookAndFeel(controlButtonLookAndFeel.get());
+    generateVoicevoxButton.setLookAndFeel(controlButtonLookAndFeel.get());
+    playButton.setLookAndFeel(controlButtonLookAndFeel.get());
+    stopButton.setLookAndFeel(controlButtonLookAndFeel.get());
+    exportAudioButton.setLookAndFeel(controlButtonLookAndFeel.get());
 
     fileStepLabel.setText(jp(u8"1. VOICEVOXプロジェクトファイルを選択"), juce::dontSendNotification);
     singerStepLabel.setText(jp(u8"2. 歌唱キャラクターを選ぶ"), juce::dontSendNotification);
     generateStepLabel.setText(jp(u8"3. 歌声生成を開始"), juce::dontSendNotification);
+    fileStepLabel.setMinimumHorizontalScale(1.0f);
+    singerStepLabel.setMinimumHorizontalScale(1.0f);
+    generateStepLabel.setMinimumHorizontalScale(1.0f);
+    previewLabel.setMinimumHorizontalScale(1.0f);
     selectedVvprojLabel.setText(jp(u8"未選択"), juce::dontSendNotification);
     selectedVvprojLabel.setJustificationType(juce::Justification::centredLeft);
 
@@ -165,8 +222,8 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     addAndMakeVisible(generateStepLabel);
 
     addAndMakeVisible(selectionModeTabs);
-    selectionModeTabs.addTab(jp(u8"手動選択"), juce::Colour::fromRGB(168, 212, 176), 0);
-    selectionModeTabs.addTab(jp(u8"自動編成"), juce::Colour::fromRGB(168, 212, 176), 1);
+    selectionModeTabs.addTab(jp(u8"手動選択"), juce::Colour::fromRGB(163, 216, 173), 0);
+    selectionModeTabs.addTab(jp(u8"自動編成"), juce::Colour::fromRGB(163, 216, 173), 1);
     selectionModeTabs.setCurrentTabIndex(static_cast<int>(singerSelectionMode));
 
     addAndMakeVisible(singerSelectionLabel);
@@ -223,7 +280,12 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     autoSingerCountLabel.setJustificationType(juce::Justification::centred);
 
     addAndMakeVisible(autoSingerCountSlider);
-    autoSingerCountSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    autoSingerCountSlider.setSliderStyle(juce::Slider::Rotary);
+    autoSingerCountSlider.setRotaryParameters(juce::MathConstants<float>::pi * 1.2f,
+                                              juce::MathConstants<float>::pi * 2.8f,
+                                              true);
+    autoSingerCountSlider.setVelocityBasedMode(false);
+    autoSingerCountSlider.setSliderSnapsToMousePosition(true);
     autoSingerCountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 18);
     autoSingerCountSlider.setRange(1.0, 2.0, 1.0);
     autoSingerCountSlider.setValue(1.0, juce::dontSendNotification);
@@ -233,7 +295,12 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     autoPanWidthLabel.setJustificationType(juce::Justification::centred);
 
     addAndMakeVisible(autoPanWidthSlider);
-    autoPanWidthSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    autoPanWidthSlider.setSliderStyle(juce::Slider::Rotary);
+    autoPanWidthSlider.setRotaryParameters(juce::MathConstants<float>::pi * 1.2f,
+                                           juce::MathConstants<float>::pi * 2.8f,
+                                           true);
+    autoPanWidthSlider.setVelocityBasedMode(false);
+    autoPanWidthSlider.setSliderSnapsToMousePosition(true);
     autoPanWidthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 18);
     autoPanWidthSlider.setRange(0.0, 100.0, 1.0);
     autoPanWidthSlider.setValue(40.0, juce::dontSendNotification);
@@ -449,6 +516,13 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
 
 VVChorusPlayerAudioProcessorEditor::~VVChorusPlayerAudioProcessorEditor()
 {
+    selectAllSingersButton.setLookAndFeel(nullptr);
+    clearSingerSelectionButton.setLookAndFeel(nullptr);
+    selectVvprojButton.setLookAndFeel(nullptr);
+    generateVoicevoxButton.setLookAndFeel(nullptr);
+    playButton.setLookAndFeel(nullptr);
+    stopButton.setLookAndFeel(nullptr);
+    exportAudioButton.setLookAndFeel(nullptr);
     singerListBox.setModel(nullptr);
     showAllStylesToggle.setLookAndFeel(nullptr);
 }
@@ -468,7 +542,7 @@ void VVChorusPlayerAudioProcessorEditor::paintListBoxItem(int rowNumber, juce::G
 
     auto bounds = juce::Rectangle<int>(0, 0, width, height);
     if (rowIsSelected)
-        g.fillAll(juce::Colour::fromRGBA(120, 170, 130, 22));
+        g.fillAll(juce::Colour::fromRGB(163, 216, 173).withAlpha(0.22f));
 
     auto content = bounds.reduced(8, 4);
     const auto checkSize = juce::jlimit(14, 18, content.getHeight());
@@ -477,7 +551,7 @@ void VVChorusPlayerAudioProcessorEditor::paintListBoxItem(int rowNumber, juce::G
 
     g.setColour(juce::Colours::white.withAlpha(0.96f));
     g.fillRoundedRectangle(checkBounds.toFloat(), 3.0f);
-    g.setColour(juce::Colour::fromRGB(103, 150, 114));
+    g.setColour(juce::Colour::fromRGB(163, 216, 173).darker(0.25f));
     g.drawRoundedRectangle(checkBounds.toFloat(), 3.0f, 1.2f);
 
     if (checked)
@@ -486,11 +560,11 @@ void VVChorusPlayerAudioProcessorEditor::paintListBoxItem(int rowNumber, juce::G
         tick.startNewSubPath(static_cast<float>(checkBounds.getX() + 3), static_cast<float>(checkBounds.getCentreY()));
         tick.lineTo(static_cast<float>(checkBounds.getX() + checkBounds.getWidth() / 2 - 1), static_cast<float>(checkBounds.getBottom() - 4));
         tick.lineTo(static_cast<float>(checkBounds.getRight() - 3), static_cast<float>(checkBounds.getY() + 4));
-        g.setColour(juce::Colour::fromRGB(56, 118, 72));
+        g.setColour(juce::Colour::fromRGB(163, 216, 173).darker(0.42f));
         g.strokePath(tick, juce::PathStrokeType(2.0f));
     }
 
-    g.setColour(juce::Colour::fromRGB(35, 66, 45));
+    g.setColour(juce::Colour::fromRGB(33, 71, 45));
     g.setFont(juce::Font(juce::FontOptions(15.0f)));
     g.drawFittedText(getSingerDisplayText(singer), content, juce::Justification::centredLeft, 1, 0.92f);
 }
@@ -780,10 +854,12 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
     autoPanWidthSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     selectVvprojButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     generateVoicevoxButton.setEnabled(canGenerate);
+    const auto accent = juce::Colour::fromRGB(163, 216, 173);
+    const auto disabledFill = juce::Colour::fromRGB(203, 228, 208).darker(0.06f);
     generateVoicevoxButton.setColour(juce::TextButton::buttonColourId,
-                                     canGenerate ? juce::Colour::fromRGB(108, 176, 122) : juce::Colour::fromRGB(188, 201, 192));
+                                     canGenerate ? accent.darker(0.28f) : disabledFill);
     generateVoicevoxButton.setColour(juce::TextButton::textColourOffId,
-                                     canGenerate ? juce::Colours::white : juce::Colour::fromRGB(100, 112, 104));
+                                     canGenerate ? juce::Colours::white : juce::Colour::fromRGB(90, 112, 97));
     generateVoicevoxButton.setAlpha(canGenerate ? 1.0f : 0.78f);
 
     const auto hasAudio = audioProcessor.hasLoadedFile();
@@ -796,63 +872,68 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
 
 void VVChorusPlayerAudioProcessorEditor::applyTheme()
 {
-    const auto accent = juce::Colour::fromRGB(98, 168, 125);
-    const auto accentSoft = juce::Colour::fromRGB(171, 214, 183);
-    const auto panel = juce::Colour::fromRGB(241, 248, 243);
-    const auto text = juce::Colour::fromRGB(24, 51, 35);
+    const auto accent = juce::Colour::fromRGB(163, 216, 173);
+    const auto accentSoft = juce::Colour::fromRGB(203, 228, 208);
+    const auto panel = juce::Colour::fromRGB(242, 250, 244);
+    const auto text = juce::Colour::fromRGB(33, 71, 45);
+    const auto border = accent.darker(0.23f);
+
+    selectionModeTabs.setColour(juce::TabbedButtonBar::tabOutlineColourId, border.withAlpha(0.65f));
+    selectionModeTabs.setColour(juce::TabbedButtonBar::frontOutlineColourId, border.withAlpha(0.75f));
+    selectionModeTabs.setColour(juce::TabbedButtonBar::tabTextColourId, text);
 
     selectVvprojButton.setColour(juce::TextButton::buttonColourId, accentSoft);
-    selectVvprojButton.setColour(juce::TextButton::textColourOffId, text.darker(0.05f));
+    selectVvprojButton.setColour(juce::TextButton::textColourOffId, text);
 
-    generateVoicevoxButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.05f));
+    generateVoicevoxButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.28f));
     generateVoicevoxButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
 
-    singerListBox.setColour(juce::ListBox::backgroundColourId, juce::Colours::white);
-    singerListBox.setColour(juce::ListBox::outlineColourId, accent.darker(0.12f));
-    singerSelectionLabel.setColour(juce::Label::backgroundColourId, juce::Colours::white);
+    singerListBox.setColour(juce::ListBox::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
+    singerListBox.setColour(juce::ListBox::outlineColourId, border);
+    singerSelectionLabel.setColour(juce::Label::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
     singerSelectionLabel.setColour(juce::Label::textColourId, text);
-    singerSelectionLabel.setColour(juce::Label::outlineColourId, accent.darker(0.2f));
+    singerSelectionLabel.setColour(juce::Label::outlineColourId, border);
     autoSelectionMethodLabel.setColour(juce::Label::textColourId, text);
     autoSingerCountLabel.setColour(juce::Label::textColourId, text);
     autoPanWidthLabel.setColour(juce::Label::textColourId, text);
-    autoSelectionMethodCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    autoSelectionMethodCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
     autoSelectionMethodCombo.setColour(juce::ComboBox::textColourId, text);
-    autoSelectionMethodCombo.setColour(juce::ComboBox::outlineColourId, accent.darker(0.2f));
-    autoSingerCountSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.08f));
-    autoSingerCountSlider.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour::fromRGB(177, 204, 183));
-    autoSingerCountSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.2f));
+    autoSelectionMethodCombo.setColour(juce::ComboBox::outlineColourId, border);
+    autoSingerCountSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.2f));
+    autoSingerCountSlider.setColour(juce::Slider::rotarySliderOutlineColourId, accentSoft.darker(0.05f));
+    autoSingerCountSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.32f));
     autoSingerCountSlider.setColour(juce::Slider::textBoxTextColourId, text);
-    autoSingerCountSlider.setColour(juce::Slider::textBoxOutlineColourId, accent.darker(0.2f));
-    autoPanWidthSlider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour::fromRGB(79, 156, 188));
-    autoPanWidthSlider.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour::fromRGB(177, 204, 183));
-    autoPanWidthSlider.setColour(juce::Slider::thumbColourId, juce::Colour::fromRGB(67, 139, 170));
+    autoSingerCountSlider.setColour(juce::Slider::textBoxOutlineColourId, border);
+    autoPanWidthSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.2f));
+    autoPanWidthSlider.setColour(juce::Slider::rotarySliderOutlineColourId, accentSoft.darker(0.05f));
+    autoPanWidthSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.32f));
     autoPanWidthSlider.setColour(juce::Slider::textBoxTextColourId, text);
-    autoPanWidthSlider.setColour(juce::Slider::textBoxOutlineColourId, accent.darker(0.2f));
+    autoPanWidthSlider.setColour(juce::Slider::textBoxOutlineColourId, border);
 
-    selectAllSingersButton.setColour(juce::TextButton::buttonColourId, accent);
-    selectAllSingersButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    clearSingerSelectionButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(199, 219, 205));
-    clearSingerSelectionButton.setColour(juce::TextButton::textColourOffId, text.darker(0.05f));
+    selectAllSingersButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.22f));
+    selectAllSingersButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.98f));
+    clearSingerSelectionButton.setColour(juce::TextButton::buttonColourId, accentSoft.darker(0.02f));
+    clearSingerSelectionButton.setColour(juce::TextButton::textColourOffId, text);
 
     showAllStylesToggle.setColour(juce::ToggleButton::textColourId, text);
-    showAllStylesToggle.setColour(juce::ToggleButton::tickColourId, accent.darker(0.15f));
-    showAllStylesToggle.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colour::fromRGB(151, 171, 157));
+    showAllStylesToggle.setColour(juce::ToggleButton::tickColourId, accent.darker(0.2f));
+    showAllStylesToggle.setColour(juce::ToggleButton::tickDisabledColourId, accentSoft.darker(0.2f));
 
-    playButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.02f));
+    playButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.2f));
     playButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    stopButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(198, 217, 203));
+    stopButton.setColour(juce::TextButton::buttonColourId, accentSoft.darker(0.03f));
     stopButton.setColour(juce::TextButton::textColourOffId, text);
 
-    exportAudioButton.setColour(juce::TextButton::buttonColourId, accent);
+    exportAudioButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.2f));
     exportAudioButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
 
-    previewPositionSlider.setColour(juce::Slider::trackColourId, accent.darker(0.15f));
-    previewPositionSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.25f));
-    previewPositionSlider.setColour(juce::Slider::backgroundColourId, juce::Colours::white);
+    previewPositionSlider.setColour(juce::Slider::trackColourId, accent.darker(0.3f));
+    previewPositionSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.38f));
+    previewPositionSlider.setColour(juce::Slider::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
 
-    selectedVvprojLabel.setColour(juce::Label::backgroundColourId, juce::Colours::white);
+    selectedVvprojLabel.setColour(juce::Label::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
     selectedVvprojLabel.setColour(juce::Label::textColourId, text);
-    selectedVvprojLabel.setColour(juce::Label::outlineColourId, accent.darker(0.2f));
+    selectedVvprojLabel.setColour(juce::Label::outlineColourId, border);
 
     statusLabel.setColour(juce::Label::backgroundColourId, panel.withAlpha(0.98f));
     statusLabel.setColour(juce::Label::textColourId, text);
@@ -964,33 +1045,59 @@ juce::String VVChorusPlayerAudioProcessorEditor::formatSeconds(double seconds) c
 //==============================================================================
 void VVChorusPlayerAudioProcessorEditor::paint(juce::Graphics &g)
 {
-    const auto top = juce::Colour::fromRGB(176, 207, 185);
-    const auto bottom = juce::Colour::fromRGB(158, 193, 171);
+    const auto darkGreen = juce::Colour::fromRGB(163, 216, 173);
+    const auto lightGreen = juce::Colour::fromRGB(203, 228, 208);
+    const auto frameColour = darkGreen.darker(0.28f);
+    const auto textColour = juce::Colour::fromRGB(43, 83, 55);
+
+    const auto top = lightGreen.brighter(0.03f);
+    const auto bottom = darkGreen.darker(0.04f);
     juce::ColourGradient bgGradient(top, 0.0f, 0.0f, bottom, 0.0f, static_cast<float>(getHeight()), false);
     g.setGradientFill(bgGradient);
     g.fillAll();
 
-    g.setColour(juce::Colour::fromRGB(244, 250, 246));
-    const auto titleHeight = juce::jlimit(24, 40, getHeight() / 12);
-    const auto titleFontSize = juce::jlimit(18.0f, 34.0f, static_cast<float>(titleHeight) * 0.74f);
-    g.setFont(juce::Font(juce::FontOptions(titleFontSize)).boldened());
-    g.drawFittedText("VVChorusPlayer", getLocalBounds().removeFromTop(titleHeight), juce::Justification::centred, 1);
+    const auto drawSectionPanel = [&](juce::Rectangle<int> area)
+    {
+        if (area.isEmpty())
+            return;
+
+        g.setColour(lightGreen.withAlpha(0.43f));
+        g.fillRoundedRectangle(area.toFloat(), 8.0f);
+        g.setColour(frameColour.withAlpha(0.8f));
+        g.drawRoundedRectangle(area.toFloat(), 8.0f, 1.1f);
+    };
+
+    drawSectionPanel(fileSectionArea);
+    drawSectionPanel(singerSectionArea);
+    drawSectionPanel(generateSectionArea);
+    drawSectionPanel(previewSectionArea);
+
+    g.setColour(juce::Colours::white.withAlpha(0.96f));
+    const auto titleHeight = juce::jlimit(22, 36, getHeight() / 13);
+    const auto titleTopPad = titlePaddingTop(getHeight());
+    const auto titleBottomPad = titlePaddingBottom(getHeight());
+    auto titleArea = getLocalBounds().removeFromTop(titleHeight + titleTopPad + titleBottomPad);
+    titleArea = titleArea.withTrimmedTop(titleTopPad).withTrimmedBottom(titleBottomPad);
+    const auto titleFontSize = juce::jlimit(18.0f, 32.0f, static_cast<float>(titleHeight) * 0.8f);
+    g.setFont(makeUiFont(titleFontSize, true));
+    g.drawFittedText("VVChorusPlayer", titleArea, juce::Justification::centred, 1);
 
     if (!waveformArea.isEmpty())
     {
         g.setColour(juce::Colours::white.withAlpha(0.93f));
         g.fillRoundedRectangle(waveformArea.toFloat(), 6.0f);
 
-        g.setColour(juce::Colour::fromRGB(106, 154, 116));
+        g.setColour(frameColour.withAlpha(0.8f));
         g.drawRoundedRectangle(waveformArea.toFloat(), 6.0f, 1.0f);
 
-        g.setColour(juce::Colour::fromRGB(140, 170, 148));
+        g.setColour(darkGreen.darker(0.18f).withAlpha(0.6f));
         g.drawHorizontalLine(waveformArea.getCentreY(), static_cast<float>(waveformArea.getX() + 2), static_cast<float>(waveformArea.getRight() - 2));
 
         if (waveformPeaks.isEmpty())
         {
-            g.setColour(juce::Colour::fromRGB(79, 113, 88));
-            g.drawFittedText(jp(u8"生成後にここへ波形を表示します"), waveformArea, juce::Justification::centred, 1);
+            g.setColour(textColour);
+            g.setFont(makeUiFont(controlButtonFontSize(previewControlHeight)));
+            g.drawText(jp(u8"生成後にここへ波形を表示します"), waveformArea, juce::Justification::centred, true);
         }
         else
         {
@@ -999,7 +1106,7 @@ void VVChorusPlayerAudioProcessorEditor::paint(juce::Graphics &g)
             const auto width = waveformArea.getWidth();
             const auto points = waveformPeaks.size();
 
-            g.setColour(juce::Colour::fromRGB(67, 125, 81));
+            g.setColour(darkGreen.darker(0.36f));
             for (int x = 0; x < width; ++x)
             {
                 const auto index = juce::jlimit(0, points - 1, x * points / juce::jmax(1, width));
@@ -1021,9 +1128,17 @@ void VVChorusPlayerAudioProcessorEditor::paint(juce::Graphics &g)
 
 void VVChorusPlayerAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced(juce::jlimit(18, 40, getWidth() / 22));
-    const auto titleHeight = juce::jlimit(24, 40, getHeight() / 12);
-    area.removeFromTop(titleHeight + juce::jlimit(8, 14, getHeight() / 70));
+    const auto outerMarginX = juce::jlimit(18, 40, getWidth() / 22);
+    const auto outerMarginY = juce::jlimit(8, 16, getHeight() / 90);
+    auto area = getLocalBounds().reduced(outerMarginX, outerMarginY);
+    const auto titleHeight = juce::jlimit(22, 36, getHeight() / 13);
+    area.removeFromTop(titleHeight + titlePaddingTop(getHeight()) + titlePaddingBottom(getHeight()));
+
+    fileSectionArea = {};
+    singerSectionArea = {};
+    generateSectionArea = {};
+    previewSectionArea = {};
+    waveformArea = {};
 
     const auto warningHeight = juce::jlimit(24, 40, getHeight() / 16);
     if (isVoicevoxUnavailable)
@@ -1037,20 +1152,60 @@ void VVChorusPlayerAudioProcessorEditor::resized()
     }
 
     const auto controlHeight = juce::jlimit(24, 42, getHeight() / 15);
-    const auto spacing = juce::jlimit(8, 22, getHeight() / 44);
-    const auto labelWidth = juce::jlimit(120, 180, getWidth() / 4);
-    const auto buttonWidth = juce::jlimit(150, 240, getWidth() / 3);
+    const auto spacing = juce::jlimit(10, 24, getHeight() / 42);
+    const auto labelWidth = juce::jlimit(230, 360, static_cast<int>(getWidth() / 2.6));
+    const auto buttonWidth = juce::jlimit(136, 210, getWidth() / 3);
+    const auto compactButtonHeight = juce::jlimit(24, 34, controlHeight - 6);
+    const auto buttonTopInset = juce::jlimit(2, 6, spacing / 4 + 1);
+    previewControlHeight = compactButtonHeight;
+    const auto uiFontSize = controlButtonFontSize(compactButtonHeight);
+    const auto uiFont = makeUiFont(uiFontSize);
+    fileStepLabel.setFont(uiFont);
+    singerStepLabel.setFont(uiFont);
+    generateStepLabel.setFont(uiFont);
+    previewLabel.setFont(uiFont);
+    singerSelectionLabel.setFont(uiFont);
+    autoSelectionMethodLabel.setFont(uiFont);
+    autoSingerCountLabel.setFont(uiFont);
+    autoPanWidthLabel.setFont(uiFont);
+    selectedVvprojLabel.setFont(uiFont);
+    statusLabel.setFont(uiFont);
+    previewTimeLabel.setFont(uiFont);
+    voicevoxWarningLabel.setFont(uiFont);
+    const auto sectionX = area.getX();
+    const auto sectionWidth = area.getWidth();
+    const auto sectionInsetX = juce::jlimit(6, 12, spacing / 2);
+    const int sectionBottomTrim = 4;
+    const auto buildSectionArea = [sectionX, sectionWidth, sectionInsetX, sectionBottomTrim](int topY, int bottomY)
+    {
+        if (bottomY <= topY)
+            return juce::Rectangle<int>();
+
+        auto rect = juce::Rectangle<int>(sectionX, topY, sectionWidth, bottomY - topY)
+                        .expanded(sectionInsetX, 0);
+        if (sectionBottomTrim > 0)
+            rect = rect.withTrimmedBottom(sectionBottomTrim);
+        if (rect.getHeight() < 8)
+            return juce::Rectangle<int>();
+        return rect;
+    };
+
+    const auto fileTop = area.getY();
 
     {
         auto row = area.removeFromTop(controlHeight);
         fileStepLabel.setBounds(row.removeFromLeft(labelWidth));
         row.removeFromLeft(spacing);
-        selectVvprojButton.setBounds(row.removeFromRight(buttonWidth));
+        auto buttonArea = row.removeFromRight(buttonWidth);
+        selectVvprojButton.setBounds(buttonArea.withTrimmedTop(buttonTopInset).withHeight(compactButtonHeight));
     }
     area.removeFromTop(spacing);
 
     selectedVvprojLabel.setBounds(area.removeFromTop(controlHeight));
     area.removeFromTop(spacing);
+    fileSectionArea = buildSectionArea(fileTop, area.getY());
+
+    const auto singerTop = area.getY();
 
     {
         auto row = area.removeFromTop(controlHeight);
@@ -1119,12 +1274,16 @@ void VVChorusPlayerAudioProcessorEditor::resized()
 
         area.removeFromTop(spacing);
     }
+    singerSectionArea = buildSectionArea(singerTop, area.getY());
+
+    const auto generateTop = area.getY();
 
     {
         auto row = area.removeFromTop(controlHeight);
         generateStepLabel.setBounds(row.removeFromLeft(labelWidth));
         row.removeFromLeft(spacing);
-        generateVoicevoxButton.setBounds(row.removeFromRight(buttonWidth));
+        auto buttonArea = row.removeFromRight(buttonWidth);
+        generateVoicevoxButton.setBounds(buttonArea.withTrimmedTop(buttonTopInset).withHeight(compactButtonHeight));
     }
     area.removeFromTop(spacing);
 
@@ -1135,18 +1294,26 @@ void VVChorusPlayerAudioProcessorEditor::resized()
     const auto minWaveHeight = 72;
     const auto fixedBottomCost = previewHeaderHeight + sliderHeight + exportButtonHeight + spacing * 3;
     const auto baseStatusHeight = juce::jmax(56, remainingForBottom - fixedBottomCost - minWaveHeight);
-    const auto statusHeight = juce::jmax(48, (baseStatusHeight * 6) / 7);
+    const auto statusLineHeight = juce::jmax(14, static_cast<int>(std::ceil(uiFontSize * 1.3f)));
+    const auto maxStatusHeight = juce::jmax(48, statusLineHeight * 3 + 8);
+    const auto preferredStatusHeight = juce::jmax(48, (baseStatusHeight * 6) / 7);
+    const auto statusHeight = juce::jmin(maxStatusHeight, preferredStatusHeight);
 
     statusLabel.setBounds(area.removeFromTop(statusHeight));
     area.removeFromTop(spacing);
+    generateSectionArea = buildSectionArea(generateTop, area.getY());
+
+    const auto previewTop = area.getY();
 
     {
         auto row = area.removeFromTop(previewHeaderHeight);
         previewLabel.setBounds(row.removeFromLeft(labelWidth));
         row.removeFromLeft(spacing);
-        playButton.setBounds(row.removeFromLeft(juce::jmin(130, row.getWidth() / 4)));
+        auto playArea = row.removeFromLeft(juce::jmin(118, row.getWidth() / 4));
+        playButton.setBounds(playArea.withTrimmedTop(buttonTopInset).withHeight(compactButtonHeight));
         row.removeFromLeft(spacing / 2);
-        stopButton.setBounds(row.removeFromLeft(juce::jmin(130, row.getWidth() / 3)));
+        auto stopArea = row.removeFromLeft(juce::jmin(118, row.getWidth() / 3));
+        stopButton.setBounds(stopArea.withTrimmedTop(buttonTopInset).withHeight(compactButtonHeight));
         row.removeFromLeft(spacing);
         previewTimeLabel.setBounds(row);
     }
@@ -1160,4 +1327,5 @@ void VVChorusPlayerAudioProcessorEditor::resized()
     area.removeFromTop(spacing / 2);
 
     exportAudioButton.setBounds(area.removeFromTop(exportButtonHeight).withSizeKeepingCentre(juce::jmin(360, area.getWidth()), exportButtonHeight));
+    previewSectionArea = buildSectionArea(previewTop, area.getY() + juce::jmax(2, spacing / 3));
 }

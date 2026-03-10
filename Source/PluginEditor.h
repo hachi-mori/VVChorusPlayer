@@ -29,6 +29,7 @@ public:
 
 private:
   class StyleSwitchLookAndFeel;
+  class ControlButtonLookAndFeel;
   enum class SingerSelectionMode
   {
     manual = 0,
@@ -74,6 +75,7 @@ private:
   juce::Slider autoPanWidthSlider;
   juce::ToggleButton showAllStylesToggle;
   std::unique_ptr<StyleSwitchLookAndFeel> showAllStylesToggleLookAndFeel;
+  std::unique_ptr<ControlButtonLookAndFeel> controlButtonLookAndFeel;
   juce::Label fileStepLabel;
   juce::TextButton selectVvprojButton;
   juce::Label selectedVvprojLabel;
@@ -109,6 +111,10 @@ private:
   juce::String waveformSourceName;
   bool isScrubbingPreview{false};
   int previewControlHeight{34};
+  juce::Rectangle<int> fileSectionArea;
+  juce::Rectangle<int> singerSectionArea;
+  juce::Rectangle<int> generateSectionArea;
+  juce::Rectangle<int> previewSectionArea;
   juce::Rectangle<int> waveformArea;
   double displayPositionSeconds{0.0};
   double displayDurationSeconds{0.0};
