@@ -1255,9 +1255,17 @@ void VVChorusPlayerAudioProcessorEditor::resized()
 
         {
             auto row = area.removeFromTop(controlHeight);
-            autoSelectionMethodLabel.setBounds(row.removeFromLeft(juce::jmax(120, labelWidth - 20)));
-            row.removeFromLeft(spacing / 2);
-            autoSelectionMethodCombo.setBounds(row.removeFromLeft(juce::jmin(220, row.getWidth())));
+            const auto methodLabelWidth = juce::jlimit(84, 130, static_cast<int>(labelWidth * 0.48));
+            const auto methodComboWidth = juce::jlimit(180, 260, static_cast<int>(getWidth() / 3.5));
+            const auto methodGap = juce::jmax(8, spacing / 2);
+            const auto methodGroupWidth = methodLabelWidth + methodGap + methodComboWidth;
+            const auto desiredX = getLocalBounds().getCentreX() - methodGroupWidth / 2;
+            const auto groupX = juce::jlimit(row.getX(), juce::jmax(row.getX(), row.getRight() - methodGroupWidth), desiredX);
+            auto methodGroup = juce::Rectangle<int>(groupX, row.getY(), methodGroupWidth, row.getHeight());
+
+            autoSelectionMethodLabel.setBounds(methodGroup.removeFromLeft(methodLabelWidth));
+            methodGroup.removeFromLeft(methodGap);
+            autoSelectionMethodCombo.setBounds(methodGroup);
         }
         area.removeFromTop(spacing);
 
@@ -1307,15 +1315,27 @@ void VVChorusPlayerAudioProcessorEditor::resized()
 
     {
         auto row = area.removeFromTop(previewHeaderHeight);
-        previewLabel.setBounds(row.removeFromLeft(labelWidth));
-        row.removeFromLeft(spacing);
-        auto playArea = row.removeFromLeft(juce::jmin(118, row.getWidth() / 4));
+        const auto previewLabelWidth = juce::jlimit(120, 190, labelWidth - 60);
+        const auto previewTimeWidth = juce::jlimit(150, 230, static_cast<int>(getWidth() / 4.4));
+
+        previewLabel.setBounds(row.removeFromLeft(previewLabelWidth));
+        previewTimeLabel.setBounds(row.removeFromRight(previewTimeWidth));
+
+        auto centerLane = row.reduced(juce::jmax(6, spacing / 2), 0);
+        const auto buttonGap = juce::jmax(10, spacing / 2);
+        const auto buttonWidth = juce::jlimit(96, 122, static_cast<int>(centerLane.getWidth() / 3.0));
+        const auto buttonGroupWidth = buttonWidth * 2 + buttonGap;
+        const auto desiredButtonX = getLocalBounds().getCentreX() - buttonGroupWidth / 2;
+        const auto buttonGroupX = juce::jlimit(centerLane.getX(),
+                                               juce::jmax(centerLane.getX(), centerLane.getRight() - buttonGroupWidth),
+                                               desiredButtonX);
+        auto buttonGroup = juce::Rectangle<int>(buttonGroupX, centerLane.getY(), buttonGroupWidth, centerLane.getHeight());
+
+        auto playArea = buttonGroup.removeFromLeft(buttonWidth);
         playButton.setBounds(playArea.withTrimmedTop(buttonTopInset).withHeight(compactButtonHeight));
-        row.removeFromLeft(spacing / 2);
-        auto stopArea = row.removeFromLeft(juce::jmin(118, row.getWidth() / 3));
+        buttonGroup.removeFromLeft(buttonGap);
+        auto stopArea = buttonGroup.removeFromLeft(buttonWidth);
         stopButton.setBounds(stopArea.withTrimmedTop(buttonTopInset).withHeight(compactButtonHeight));
-        row.removeFromLeft(spacing);
-        previewTimeLabel.setBounds(row);
     }
     area.removeFromTop(spacing / 2);
 
