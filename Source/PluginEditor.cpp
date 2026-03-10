@@ -165,8 +165,8 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     addAndMakeVisible(generateStepLabel);
 
     addAndMakeVisible(selectionModeTabs);
-    selectionModeTabs.addTab(jp(u8"手動選択"), juce::Colour::fromRGB(124, 188, 136), 0);
-    selectionModeTabs.addTab(jp(u8"自動編成"), juce::Colour::fromRGB(124, 188, 136), 1);
+    selectionModeTabs.addTab(jp(u8"手動選択"), juce::Colour::fromRGB(168, 212, 176), 0);
+    selectionModeTabs.addTab(jp(u8"自動編成"), juce::Colour::fromRGB(168, 212, 176), 1);
     selectionModeTabs.setCurrentTabIndex(static_cast<int>(singerSelectionMode));
 
     addAndMakeVisible(singerSelectionLabel);
@@ -439,8 +439,8 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
 
     applyTheme();
     setResizable(true, true);
-    setResizeLimits(560, 720, 1100, 1080);
-    setSize(780, 880);
+    setResizeLimits(600, 760, 1240, 1180);
+    setSize(860, 960);
     updateSelectionModeUi();
 
     startTimerHz(30);
@@ -796,18 +796,19 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
 
 void VVChorusPlayerAudioProcessorEditor::applyTheme()
 {
-    const auto accent = juce::Colour::fromRGB(165, 212, 173);
-    const auto panel = juce::Colour::fromRGB(233, 245, 236);
-    const auto text = juce::Colour::fromRGB(35, 66, 45);
+    const auto accent = juce::Colour::fromRGB(98, 168, 125);
+    const auto accentSoft = juce::Colour::fromRGB(171, 214, 183);
+    const auto panel = juce::Colour::fromRGB(241, 248, 243);
+    const auto text = juce::Colour::fromRGB(24, 51, 35);
 
-    selectVvprojButton.setColour(juce::TextButton::buttonColourId, accent);
-    selectVvprojButton.setColour(juce::TextButton::textColourOffId, text);
+    selectVvprojButton.setColour(juce::TextButton::buttonColourId, accentSoft);
+    selectVvprojButton.setColour(juce::TextButton::textColourOffId, text.darker(0.05f));
 
-    generateVoicevoxButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.15f));
+    generateVoicevoxButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.05f));
     generateVoicevoxButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
 
     singerListBox.setColour(juce::ListBox::backgroundColourId, juce::Colours::white);
-    singerListBox.setColour(juce::ListBox::outlineColourId, accent.darker(0.2f));
+    singerListBox.setColour(juce::ListBox::outlineColourId, accent.darker(0.12f));
     singerSelectionLabel.setColour(juce::Label::backgroundColourId, juce::Colours::white);
     singerSelectionLabel.setColour(juce::Label::textColourId, text);
     singerSelectionLabel.setColour(juce::Label::outlineColourId, accent.darker(0.2f));
@@ -817,30 +818,32 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
     autoSelectionMethodCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
     autoSelectionMethodCombo.setColour(juce::ComboBox::textColourId, text);
     autoSelectionMethodCombo.setColour(juce::ComboBox::outlineColourId, accent.darker(0.2f));
-    autoSingerCountSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.18f));
+    autoSingerCountSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.08f));
     autoSingerCountSlider.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour::fromRGB(177, 204, 183));
+    autoSingerCountSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.2f));
     autoSingerCountSlider.setColour(juce::Slider::textBoxTextColourId, text);
     autoSingerCountSlider.setColour(juce::Slider::textBoxOutlineColourId, accent.darker(0.2f));
-    autoPanWidthSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.25f));
+    autoPanWidthSlider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour::fromRGB(79, 156, 188));
     autoPanWidthSlider.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour::fromRGB(177, 204, 183));
+    autoPanWidthSlider.setColour(juce::Slider::thumbColourId, juce::Colour::fromRGB(67, 139, 170));
     autoPanWidthSlider.setColour(juce::Slider::textBoxTextColourId, text);
     autoPanWidthSlider.setColour(juce::Slider::textBoxOutlineColourId, accent.darker(0.2f));
 
-    selectAllSingersButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(124, 188, 136));
+    selectAllSingersButton.setColour(juce::TextButton::buttonColourId, accent);
     selectAllSingersButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    clearSingerSelectionButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(177, 204, 183));
-    clearSingerSelectionButton.setColour(juce::TextButton::textColourOffId, text);
+    clearSingerSelectionButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(199, 219, 205));
+    clearSingerSelectionButton.setColour(juce::TextButton::textColourOffId, text.darker(0.05f));
 
     showAllStylesToggle.setColour(juce::ToggleButton::textColourId, text);
     showAllStylesToggle.setColour(juce::ToggleButton::tickColourId, accent.darker(0.15f));
     showAllStylesToggle.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colour::fromRGB(151, 171, 157));
 
-    playButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.05f));
+    playButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.02f));
     playButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    stopButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(180, 207, 186));
+    stopButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(198, 217, 203));
     stopButton.setColour(juce::TextButton::textColourOffId, text);
 
-    exportAudioButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(129, 186, 140));
+    exportAudioButton.setColour(juce::TextButton::buttonColourId, accent);
     exportAudioButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
 
     previewPositionSlider.setColour(juce::Slider::trackColourId, accent.darker(0.15f));
@@ -851,7 +854,7 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
     selectedVvprojLabel.setColour(juce::Label::textColourId, text);
     selectedVvprojLabel.setColour(juce::Label::outlineColourId, accent.darker(0.2f));
 
-    statusLabel.setColour(juce::Label::backgroundColourId, panel);
+    statusLabel.setColour(juce::Label::backgroundColourId, panel.withAlpha(0.98f));
     statusLabel.setColour(juce::Label::textColourId, text);
     voicevoxWarningLabel.setColour(juce::Label::backgroundColourId, juce::Colour::fromRGB(255, 239, 204));
     voicevoxWarningLabel.setColour(juce::Label::textColourId, juce::Colour::fromRGB(135, 72, 16));
@@ -961,10 +964,13 @@ juce::String VVChorusPlayerAudioProcessorEditor::formatSeconds(double seconds) c
 //==============================================================================
 void VVChorusPlayerAudioProcessorEditor::paint(juce::Graphics &g)
 {
-    const auto background = juce::Colour::fromRGB(165, 212, 173).darker(0.25f);
-    g.fillAll(background);
+    const auto top = juce::Colour::fromRGB(176, 207, 185);
+    const auto bottom = juce::Colour::fromRGB(158, 193, 171);
+    juce::ColourGradient bgGradient(top, 0.0f, 0.0f, bottom, 0.0f, static_cast<float>(getHeight()), false);
+    g.setGradientFill(bgGradient);
+    g.fillAll();
 
-    g.setColour(juce::Colours::white);
+    g.setColour(juce::Colour::fromRGB(244, 250, 246));
     const auto titleHeight = juce::jlimit(24, 40, getHeight() / 12);
     const auto titleFontSize = juce::jlimit(18.0f, 34.0f, static_cast<float>(titleHeight) * 0.74f);
     g.setFont(juce::Font(juce::FontOptions(titleFontSize)).boldened());
@@ -1015,9 +1021,9 @@ void VVChorusPlayerAudioProcessorEditor::paint(juce::Graphics &g)
 
 void VVChorusPlayerAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced(juce::jlimit(14, 34, getWidth() / 24));
+    auto area = getLocalBounds().reduced(juce::jlimit(18, 40, getWidth() / 22));
     const auto titleHeight = juce::jlimit(24, 40, getHeight() / 12);
-    area.removeFromTop(titleHeight + juce::jlimit(1, 6, getHeight() / 90));
+    area.removeFromTop(titleHeight + juce::jlimit(8, 14, getHeight() / 70));
 
     const auto warningHeight = juce::jlimit(24, 40, getHeight() / 16);
     if (isVoicevoxUnavailable)
@@ -1030,8 +1036,8 @@ void VVChorusPlayerAudioProcessorEditor::resized()
         voicevoxWarningLabel.setBounds({});
     }
 
-    const auto controlHeight = juce::jlimit(24, 46, getHeight() / 13);
-    const auto spacing = juce::jlimit(6, 18, getHeight() / 50);
+    const auto controlHeight = juce::jlimit(24, 42, getHeight() / 15);
+    const auto spacing = juce::jlimit(8, 22, getHeight() / 44);
     const auto labelWidth = juce::jlimit(120, 180, getWidth() / 4);
     const auto buttonWidth = juce::jlimit(150, 240, getWidth() / 3);
 
@@ -1050,9 +1056,11 @@ void VVChorusPlayerAudioProcessorEditor::resized()
         auto row = area.removeFromTop(controlHeight);
         singerStepLabel.setBounds(row.removeFromLeft(labelWidth));
         row.removeFromLeft(spacing);
-        selectionModeTabs.setBounds(row.removeFromRight(juce::jmin(360, row.getWidth())));
+        auto tabArea = row.removeFromRight(juce::jmin(320, row.getWidth()));
+        const auto tabHeight = juce::jlimit(26, 32, controlHeight - 2);
+        selectionModeTabs.setBounds(tabArea.withSizeKeepingCentre(tabArea.getWidth(), tabHeight));
     }
-    area.removeFromTop(spacing / 2);
+    area.removeFromTop(spacing);
 
     if (singerSelectionMode == SingerSelectionMode::manual)
     {
@@ -1066,7 +1074,7 @@ void VVChorusPlayerAudioProcessorEditor::resized()
             autoPanWidthLabel.setBounds({});
             autoPanWidthSlider.setBounds({});
         }
-        area.removeFromTop(spacing / 2);
+        area.removeFromTop(spacing);
 
         {
             auto row = area.removeFromTop(controlHeight);
@@ -1076,7 +1084,7 @@ void VVChorusPlayerAudioProcessorEditor::resized()
             row.removeFromRight(spacing / 2);
             selectAllSingersButton.setBounds(row.removeFromRight(juce::jmin(120, buttonWidth / 2 + 40)));
         }
-        area.removeFromTop(spacing / 2);
+        area.removeFromTop(spacing);
 
         const auto singerListHeight = juce::jlimit(96, 180, getHeight() / 6);
         singerListBox.setBounds(area.removeFromTop(singerListHeight));
@@ -1096,7 +1104,7 @@ void VVChorusPlayerAudioProcessorEditor::resized()
             row.removeFromLeft(spacing / 2);
             autoSelectionMethodCombo.setBounds(row.removeFromLeft(juce::jmin(220, row.getWidth())));
         }
-        area.removeFromTop(spacing / 2);
+        area.removeFromTop(spacing);
 
         const auto knobAreaHeight = juce::jlimit(118, 170, getHeight() / 5);
         auto knobsArea = area.removeFromTop(knobAreaHeight);
