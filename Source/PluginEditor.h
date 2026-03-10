@@ -17,8 +17,7 @@
  */
 class VVChorusPlayerAudioProcessorEditor : public juce::AudioProcessorEditor,
                                            private juce::Timer,
-                                           private juce::ListBoxModel,
-                                           private juce::TabbedButtonBar::Listener
+                                           private juce::ListBoxModel
 {
 public:
   VVChorusPlayerAudioProcessorEditor(VVChorusPlayerAudioProcessor &);
@@ -40,7 +39,6 @@ private:
   void paintListBoxItem(int rowNumber, juce::Graphics &g, int width, int height, bool rowIsSelected) override;
   void listBoxItemClicked(int rowNumber, const juce::MouseEvent &event) override;
   juce::Component *refreshComponentForRow(int rowNumber, bool isRowSelected, juce::Component *existingComponentToUpdate) override;
-  void currentTabChanged(int newCurrentTabIndex, const juce::String &newCurrentTabName) override;
   void timerCallback() override;
   void startFetchSingers();
   void startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers,
@@ -51,6 +49,7 @@ private:
   juce::Array<float> buildPanPositions(int singerCount) const;
   juce::String getSingerDisplayText(const voicevox::SingerStyle &singer) const;
   void updateSingerSelectionLabel();
+  void syncSelectionModeFromTab();
   void updateSelectionModeUi();
   void refreshPreviewUi();
   juce::String formatSeconds(double seconds) const;

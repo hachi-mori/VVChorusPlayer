@@ -165,7 +165,6 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     addAndMakeVisible(generateStepLabel);
 
     addAndMakeVisible(selectionModeTabs);
-    selectionModeTabs.addListener(this);
     selectionModeTabs.addTab(jp(u8"手動選択"), juce::Colour::fromRGB(124, 188, 136), 0);
     selectionModeTabs.addTab(jp(u8"自動編成"), juce::Colour::fromRGB(124, 188, 136), 1);
     selectionModeTabs.setCurrentTabIndex(static_cast<int>(singerSelectionMode));
@@ -450,7 +449,6 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
 
 VVChorusPlayerAudioProcessorEditor::~VVChorusPlayerAudioProcessorEditor()
 {
-    selectionModeTabs.removeListener(this);
     singerListBox.setModel(nullptr);
     showAllStylesToggle.setLookAndFeel(nullptr);
 }
@@ -524,10 +522,9 @@ juce::Component *VVChorusPlayerAudioProcessorEditor::refreshComponentForRow(int 
     return nullptr;
 }
 
-void VVChorusPlayerAudioProcessorEditor::currentTabChanged(int newCurrentTabIndex, const juce::String &newCurrentTabName)
+void VVChorusPlayerAudioProcessorEditor::syncSelectionModeFromTab()
 {
-    juce::ignoreUnused(newCurrentTabName);
-
+    const auto newCurrentTabIndex = selectionModeTabs.getCurrentTabIndex();
     const auto newMode = (newCurrentTabIndex == static_cast<int>(SingerSelectionMode::autoArrange))
                              ? SingerSelectionMode::autoArrange
                              : SingerSelectionMode::manual;
@@ -868,6 +865,8 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
 
 void VVChorusPlayerAudioProcessorEditor::timerCallback()
 {
+    syncSelectionModeFromTab();
+
     if (isVoicevoxUnavailable && !isLoadingSingers && juce::Time::getMillisecondCounter() >= nextVoicevoxRetryTick)
     {
         nextVoicevoxRetryTick = juce::Time::getMillisecondCounter() + 2500;
