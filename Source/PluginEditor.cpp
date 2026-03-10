@@ -225,8 +225,8 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     addAndMakeVisible(autoSingerCountSlider);
     autoSingerCountSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     autoSingerCountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 18);
-    autoSingerCountSlider.setRange(1.0, 1.0, 1.0);
-    autoSingerCountSlider.setValue(3.0, juce::dontSendNotification);
+    autoSingerCountSlider.setRange(1.0, 2.0, 1.0);
+    autoSingerCountSlider.setValue(1.0, juce::dontSendNotification);
 
     addAndMakeVisible(autoPanWidthLabel);
     autoPanWidthLabel.setText(jp(u8"Pan幅"), juce::dontSendNotification);
@@ -763,7 +763,8 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
     if (!isManualMode)
     {
         const auto maxCount = juce::jmax(1, availableSingers.size());
-        autoSingerCountSlider.setRange(1.0, static_cast<double>(maxCount), 1.0);
+        const auto sliderMax = juce::jmax(2, maxCount);
+        autoSingerCountSlider.setRange(1.0, static_cast<double>(sliderMax), 1.0);
         if (autoSingerCountSlider.getValue() > maxCount)
             autoSingerCountSlider.setValue(static_cast<double>(maxCount), juce::dontSendNotification);
     }
@@ -775,7 +776,7 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
     clearSingerSelectionButton.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !selectedSpeakerIds.isEmpty());
     showAllStylesToggle.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     autoSelectionMethodCombo.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
-    autoSingerCountSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
+    autoSingerCountSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && availableSingers.size() > 1);
     autoPanWidthSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     selectVvprojButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     generateVoicevoxButton.setEnabled(canGenerate);
