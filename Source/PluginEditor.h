@@ -17,7 +17,8 @@
  */
 class VVChorusPlayerAudioProcessorEditor : public juce::AudioProcessorEditor,
                                            private juce::Timer,
-                                           private juce::ListBoxModel
+                                           private juce::ListBoxModel,
+                                           private juce::TabbedButtonBar::Listener
 {
 public:
   VVChorusPlayerAudioProcessorEditor(VVChorusPlayerAudioProcessor &);
@@ -29,18 +30,28 @@ public:
 
 private:
   class StyleSwitchLookAndFeel;
+  enum class SingerSelectionMode
+  {
+    manual = 0,
+    autoArrange = 1
+  };
 
   int getNumRows() override;
   void paintListBoxItem(int rowNumber, juce::Graphics &g, int width, int height, bool rowIsSelected) override;
   void listBoxItemClicked(int rowNumber, const juce::MouseEvent &event) override;
   juce::Component *refreshComponentForRow(int rowNumber, bool isRowSelected, juce::Component *existingComponentToUpdate) override;
+  void currentTabChanged(int newCurrentTabIndex, const juce::String &newCurrentTabName) override;
   void timerCallback() override;
   void startFetchSingers();
-  void startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers);
+  void startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers,
+                               const juce::Array<float> &panPositions = {});
   void rebuildSingerListItems();
   juce::Array<voicevox::SingerStyle> getSelectedSingers() const;
+  juce::Array<voicevox::SingerStyle> getAutoSelectedSingers() const;
+  juce::Array<float> buildPanPositions(int singerCount) const;
   juce::String getSingerDisplayText(const voicevox::SingerStyle &singer) const;
   void updateSingerSelectionLabel();
+  void updateSelectionModeUi();
   void refreshPreviewUi();
   juce::String formatSeconds(double seconds) const;
   void updateActionState();
@@ -51,10 +62,17 @@ private:
   VVChorusPlayerAudioProcessor &audioProcessor;
 
   juce::Label singerStepLabel;
+  juce::TabbedButtonBar selectionModeTabs{juce::TabbedButtonBar::TabsAtTop};
   juce::ListBox singerListBox;
   juce::Label singerSelectionLabel;
   juce::TextButton selectAllSingersButton;
   juce::TextButton clearSingerSelectionButton;
+  juce::Label autoSelectionMethodLabel;
+  juce::ComboBox autoSelectionMethodCombo;
+  juce::Label autoSingerCountLabel;
+  juce::Slider autoSingerCountSlider;
+  juce::Label autoPanWidthLabel;
+  juce::Slider autoPanWidthSlider;
   juce::ToggleButton showAllStylesToggle;
   std::unique_ptr<StyleSwitchLookAndFeel> showAllStylesToggleLookAndFeel;
   juce::Label fileStepLabel;
@@ -77,6 +95,7 @@ private:
   bool isLoadingSingers{false};
   bool isShowingAllStyles{false};
   bool isVoicevoxUnavailable{false};
+  SingerSelectionMode singerSelectionMode{SingerSelectionMode::manual};
   juce::Array<voicevox::SingerStyle> availableSingers;
   juce::Array<int> selectedSpeakerIds;
   juce::String voicevoxBaseUrl{"http://127.0.0.1:50021"};

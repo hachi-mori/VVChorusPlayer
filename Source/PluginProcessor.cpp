@@ -48,6 +48,7 @@ namespace
     }
 
     juce::Result mixWavFilesToBuffer(const juce::Array<juce::File> &wavFiles,
+                                     const juce::Array<float> &panPositions,
                                      double targetSampleRate,
                                      juce::AudioBuffer<float> &outBuffer,
                                      double &outSampleRate)
@@ -61,7 +62,7 @@ namespace
         juce::Array<juce::AudioBuffer<float>> sourceBuffers;
         sourceBuffers.ensureStorageAllocated(wavFiles.size());
 
-        int outputChannels = 2;
+        constexpr int outputChannels = 2;
         int outputSamples = 0;
         auto mixedSampleRate = targetSampleRate > 0.0 ? targetSampleRate : 0.0;
 
@@ -84,7 +85,6 @@ namespace
             if (sourceRate > 0.0 && mixedSampleRate > 0.0 && !juce::approximatelyEqual(sourceRate, mixedSampleRate))
                 readBuffer = resampleBufferLinear(readBuffer, sourceRate, mixedSampleRate);
 
-            outputChannels = juce::jmax(outputChannels, readBuffer.getNumChannels());
             outputSamples = juce::jmax(outputSamples, readBuffer.getNumSamples());
             sourceBuffers.add(std::move(readBuffer));
         }
@@ -95,12 +95,26 @@ namespace
         outBuffer.setSize(outputChannels, outputSamples);
         outBuffer.clear();
 
-        for (const auto &source : sourceBuffers)
+        for (int sourceIndex = 0; sourceIndex < sourceBuffers.size(); ++sourceIndex)
         {
-            for (int channel = 0; channel < outputChannels; ++channel)
+            const auto &source = sourceBuffers.getReference(sourceIndex);
+            const auto pan = juce::jlimit(-1.0f, 1.0f,
+                                          juce::isPositiveAndBelow(sourceIndex, panPositions.size()) ? panPositions[sourceIndex] : 0.0f);
+            const auto angle = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+            const auto leftGain = std::cos(angle);
+            const auto rightGain = std::sin(angle);
+            const auto sampleCount = source.getNumSamples();
+
+            auto *leftDst = outBuffer.getWritePointer(0);
+            auto *rightDst = outBuffer.getWritePointer(1);
+            const auto *sourceLeft = source.getReadPointer(0);
+            const auto *sourceRight = source.getReadPointer(juce::jmin(1, source.getNumChannels() - 1));
+
+            for (int sample = 0; sample < sampleCount; ++sample)
             {
-                const auto sourceChannel = juce::jmin(channel, source.getNumChannels() - 1);
-                outBuffer.addFrom(channel, 0, source, sourceChannel, 0, source.getNumSamples());
+                const auto mono = source.getNumChannels() > 1 ? (sourceLeft[sample] + sourceRight[sample]) * 0.5f : sourceLeft[sample];
+                leftDst[sample] += mono * leftGain;
+                rightDst[sample] += mono * rightGain;
             }
         }
 
@@ -391,6 +405,15 @@ juce::Result VVChorusPlayerAudioProcessor::generateChorusFromVvproj(const juce::
                                                                     const juce::Array<voicevox::SingerStyle> &singers,
                                                                     const juce::String &baseUrl)
 {
+    return generateChorusFromVvproj(vvprojFile, trackIndex, singers, {}, baseUrl);
+}
+
+juce::Result VVChorusPlayerAudioProcessor::generateChorusFromVvproj(const juce::File &vvprojFile,
+                                                                    int trackIndex,
+                                                                    const juce::Array<voicevox::SingerStyle> &singers,
+                                                                    const juce::Array<float> &panPositions,
+                                                                    const juce::String &baseUrl)
+{
     if (!vvprojFile.existsAsFile())
         return juce::Result::fail("vvproj file not found");
 
@@ -462,7 +485,7 @@ juce::Result VVChorusPlayerAudioProcessor::generateChorusFromVvproj(const juce::
 
     juce::AudioBuffer<float> mixedBuffer;
     double mixedSampleRate = outputSampleRate;
-    const auto mixResult = mixWavFilesToBuffer(synthesizedFiles, outputSampleRate, mixedBuffer, mixedSampleRate);
+    const auto mixResult = mixWavFilesToBuffer(synthesizedFiles, panPositions, outputSampleRate, mixedBuffer, mixedSampleRate);
 
     for (const auto &file : synthesizedFiles)
         file.deleteFile();

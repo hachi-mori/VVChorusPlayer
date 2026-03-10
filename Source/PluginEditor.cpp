@@ -144,53 +144,6 @@ public:
     }
 };
 
-class SingerListRowComponent : public juce::Component
-{
-public:
-    SingerListRowComponent()
-    {
-        addAndMakeVisible(toggle);
-        addAndMakeVisible(nameLabel);
-        toggle.setClickingTogglesState(true);
-        toggle.setColour(juce::ToggleButton::tickColourId, juce::Colour::fromRGB(67, 125, 81));
-        toggle.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colour::fromRGB(151, 171, 157));
-
-        nameLabel.setJustificationType(juce::Justification::centredLeft);
-        nameLabel.setColour(juce::Label::textColourId, juce::Colour::fromRGB(35, 66, 45));
-    }
-
-    void bind(const juce::String &labelText, bool isSelected, std::function<void(bool)> onToggleChanged)
-    {
-        callback = std::move(onToggleChanged);
-        isUpdating = true;
-        nameLabel.setText(labelText, juce::dontSendNotification);
-        toggle.setButtonText({});
-        toggle.setToggleState(isSelected, juce::dontSendNotification);
-        isUpdating = false;
-
-        toggle.onClick = [this]
-        {
-            if (isUpdating || callback == nullptr)
-                return;
-            callback(toggle.getToggleState());
-        };
-    }
-
-    void resized() override
-    {
-        auto bounds = getLocalBounds().reduced(4, 1);
-        auto left = bounds.removeFromLeft(26);
-        toggle.setBounds(left);
-        nameLabel.setBounds(bounds);
-    }
-
-private:
-    juce::ToggleButton toggle;
-    juce::Label nameLabel;
-    std::function<void(bool)> callback;
-    bool isUpdating{false};
-};
-
 //==============================================================================
 VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusPlayerAudioProcessor &p)
     : AudioProcessorEditor(&p), audioProcessor(p)
@@ -210,6 +163,12 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     addAndMakeVisible(singerStepLabel);
     addAndMakeVisible(fileStepLabel);
     addAndMakeVisible(generateStepLabel);
+
+    addAndMakeVisible(selectionModeTabs);
+    selectionModeTabs.addListener(this);
+    selectionModeTabs.addTab(jp(u8"手動選択"), juce::Colour::fromRGB(124, 188, 136), 0);
+    selectionModeTabs.addTab(jp(u8"自動編成"), juce::Colour::fromRGB(124, 188, 136), 1);
+    selectionModeTabs.setCurrentTabIndex(static_cast<int>(singerSelectionMode));
 
     addAndMakeVisible(singerSelectionLabel);
     singerSelectionLabel.setJustificationType(juce::Justification::centredLeft);
@@ -250,6 +209,35 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         updateSingerSelectionLabel();
         updateActionState();
     };
+
+    addAndMakeVisible(autoSelectionMethodLabel);
+    autoSelectionMethodLabel.setText(jp(u8"選択方式"), juce::dontSendNotification);
+    autoSelectionMethodLabel.setJustificationType(juce::Justification::centredLeft);
+
+    addAndMakeVisible(autoSelectionMethodCombo);
+    autoSelectionMethodCombo.addItem(jp(u8"ランダム"), 1);
+    autoSelectionMethodCombo.setSelectedId(1, juce::dontSendNotification);
+    autoSelectionMethodCombo.setEnabled(false);
+
+    addAndMakeVisible(autoSingerCountLabel);
+    autoSingerCountLabel.setText(jp(u8"合唱人数"), juce::dontSendNotification);
+    autoSingerCountLabel.setJustificationType(juce::Justification::centred);
+
+    addAndMakeVisible(autoSingerCountSlider);
+    autoSingerCountSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    autoSingerCountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 18);
+    autoSingerCountSlider.setRange(1.0, 1.0, 1.0);
+    autoSingerCountSlider.setValue(3.0, juce::dontSendNotification);
+
+    addAndMakeVisible(autoPanWidthLabel);
+    autoPanWidthLabel.setText(jp(u8"Pan幅"), juce::dontSendNotification);
+    autoPanWidthLabel.setJustificationType(juce::Justification::centred);
+
+    addAndMakeVisible(autoPanWidthSlider);
+    autoPanWidthSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    autoPanWidthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 18);
+    autoPanWidthSlider.setRange(0.0, 100.0, 1.0);
+    autoPanWidthSlider.setValue(40.0, juce::dontSendNotification);
 
     addAndMakeVisible(showAllStylesToggle);
     showAllStylesToggle.setButtonText(jp(u8"表示"));
@@ -419,10 +407,25 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         if (isGeneratingVoicevox || isLoadingSingers)
             return;
 
-        const auto selectedSingers = getSelectedSingers();
+        juce::Array<voicevox::SingerStyle> selectedSingers;
+        juce::Array<float> panPositions;
+
+        if (singerSelectionMode == SingerSelectionMode::manual)
+        {
+            selectedSingers = getSelectedSingers();
+        }
+        else
+        {
+            selectedSingers = getAutoSelectedSingers();
+            panPositions = buildPanPositions(selectedSingers.size());
+        }
+
         if (selectedSingers.isEmpty())
         {
-            statusLabel.setText(jp(u8"先にキャラを1人以上選択してください"), juce::dontSendNotification);
+            statusLabel.setText(singerSelectionMode == SingerSelectionMode::manual
+                                    ? jp(u8"先にキャラを1人以上選択してください")
+                                    : jp(u8"自動編成に使えるキャラがありません"),
+                                juce::dontSendNotification);
             return;
         }
 
@@ -432,13 +435,14 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
             return;
         }
 
-        startVoicevoxGeneration(selectedSingers);
+        startVoicevoxGeneration(selectedSingers, panPositions);
     };
 
     applyTheme();
     setResizable(true, true);
     setResizeLimits(560, 720, 1100, 1080);
     setSize(780, 880);
+    updateSelectionModeUi();
 
     startTimerHz(30);
     startFetchSingers();
@@ -446,6 +450,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
 
 VVChorusPlayerAudioProcessorEditor::~VVChorusPlayerAudioProcessorEditor()
 {
+    selectionModeTabs.removeListener(this);
     singerListBox.setModel(nullptr);
     showAllStylesToggle.setLookAndFeel(nullptr);
 }
@@ -496,6 +501,9 @@ void VVChorusPlayerAudioProcessorEditor::listBoxItemClicked(int rowNumber, const
 {
     juce::ignoreUnused(event);
 
+    if (singerSelectionMode != SingerSelectionMode::manual)
+        return;
+
     if (isGeneratingVoicevox || isLoadingSingers)
         return;
 
@@ -516,6 +524,48 @@ juce::Component *VVChorusPlayerAudioProcessorEditor::refreshComponentForRow(int 
     return nullptr;
 }
 
+void VVChorusPlayerAudioProcessorEditor::currentTabChanged(int newCurrentTabIndex, const juce::String &newCurrentTabName)
+{
+    juce::ignoreUnused(newCurrentTabName);
+
+    const auto newMode = (newCurrentTabIndex == static_cast<int>(SingerSelectionMode::autoArrange))
+                             ? SingerSelectionMode::autoArrange
+                             : SingerSelectionMode::manual;
+    if (singerSelectionMode == newMode)
+        return;
+
+    singerSelectionMode = newMode;
+    if (singerSelectionMode == SingerSelectionMode::autoArrange)
+    {
+        isShowingAllStyles = false;
+        showAllStylesToggle.setToggleState(false, juce::dontSendNotification);
+    }
+
+    updateSelectionModeUi();
+    startFetchSingers();
+}
+
+void VVChorusPlayerAudioProcessorEditor::updateSelectionModeUi()
+{
+    const auto isManual = singerSelectionMode == SingerSelectionMode::manual;
+
+    singerSelectionLabel.setVisible(isManual);
+    singerListBox.setVisible(isManual);
+    selectAllSingersButton.setVisible(isManual);
+    clearSingerSelectionButton.setVisible(isManual);
+    showAllStylesToggle.setVisible(isManual);
+
+    autoSelectionMethodLabel.setVisible(!isManual);
+    autoSelectionMethodCombo.setVisible(!isManual);
+    autoSingerCountLabel.setVisible(!isManual);
+    autoSingerCountSlider.setVisible(!isManual);
+    autoPanWidthLabel.setVisible(!isManual);
+    autoPanWidthSlider.setVisible(!isManual);
+
+    resized();
+    repaint();
+}
+
 void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
 {
     if (isLoadingSingers)
@@ -526,7 +576,7 @@ void VVChorusPlayerAudioProcessorEditor::startFetchSingers()
 
     const auto safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this);
     const auto baseUrl = voicevoxBaseUrl;
-    const auto includeAllStyles = isShowingAllStyles;
+    const auto includeAllStyles = (singerSelectionMode == SingerSelectionMode::manual) && isShowingAllStyles;
 
     std::thread([safeThis, baseUrl, includeAllStyles]
                 {
@@ -591,6 +641,58 @@ juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getSelect
     return selectedSingers;
 }
 
+juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getAutoSelectedSingers() const
+{
+    juce::Array<voicevox::SingerStyle> selected;
+    if (availableSingers.isEmpty())
+        return selected;
+
+    const auto requestedCount = static_cast<int>(std::lround(autoSingerCountSlider.getValue()));
+    const auto targetCount = juce::jlimit(1, availableSingers.size(), requestedCount);
+
+    juce::Array<int> indices;
+    indices.ensureStorageAllocated(availableSingers.size());
+    for (int i = 0; i < availableSingers.size(); ++i)
+        indices.add(i);
+
+    auto &random = juce::Random::getSystemRandom();
+    for (int i = indices.size() - 1; i > 0; --i)
+    {
+        const auto swapIndex = random.nextInt(i + 1);
+        indices.swap(i, swapIndex);
+    }
+
+    for (int i = 0; i < targetCount; ++i)
+        selected.add(availableSingers.getReference(indices[i]));
+
+    return selected;
+}
+
+juce::Array<float> VVChorusPlayerAudioProcessorEditor::buildPanPositions(int singerCount) const
+{
+    juce::Array<float> panPositions;
+    if (singerCount <= 0)
+        return panPositions;
+
+    panPositions.ensureStorageAllocated(singerCount);
+    const auto normalizedWidth = static_cast<float>(autoPanWidthSlider.getValue() / 100.0);
+    const auto maxPan = juce::jlimit(0.0f, 1.0f, normalizedWidth * 0.3f);
+
+    if (singerCount == 1)
+    {
+        panPositions.add(0.0f);
+        return panPositions;
+    }
+
+    for (int i = 0; i < singerCount; ++i)
+    {
+        const auto ratio = static_cast<float>(i) / static_cast<float>(singerCount - 1);
+        panPositions.add(-maxPan + ratio * (maxPan * 2.0f));
+    }
+
+    return panPositions;
+}
+
 juce::String VVChorusPlayerAudioProcessorEditor::getSingerDisplayText(const voicevox::SingerStyle &singer) const
 {
     if (isShowingAllStyles)
@@ -603,7 +705,8 @@ void VVChorusPlayerAudioProcessorEditor::updateSingerSelectionLabel()
     singerSelectionLabel.setText(juce::String(selectedSpeakerIds.size()) + jp(u8"キャラ選択中"), juce::dontSendNotification);
 }
 
-void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers)
+void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers,
+                                                                 const juce::Array<float> &panPositions)
 {
     isGeneratingVoicevox = true;
     displayedProgress = 0.0;
@@ -619,11 +722,12 @@ void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Arr
     auto *processor = &audioProcessor;
     const auto safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this);
 
-    std::thread([safeThis, processor, selectedFile = selectedVvprojFile, selectedSingers, baseUrl = voicevoxBaseUrl]
+    std::thread([safeThis, processor, selectedFile = selectedVvprojFile, selectedSingers, panPositions, baseUrl = voicevoxBaseUrl]
                 {
         const auto result = processor->generateChorusFromVvproj (selectedFile,
                                                                   0,
                                                                   selectedSingers,
+                                                                  panPositions,
                                                                   baseUrl);
 
         juce::MessageManager::callAsync ([safeThis, result]
@@ -651,16 +755,31 @@ void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Arr
 
 void VVChorusPlayerAudioProcessorEditor::updateActionState()
 {
-    const auto hasSingerSelection = !selectedSpeakerIds.isEmpty();
+    const auto isManualMode = singerSelectionMode == SingerSelectionMode::manual;
+    const auto hasSingerSelection = isManualMode
+                                        ? !selectedSpeakerIds.isEmpty()
+                                        : !availableSingers.isEmpty();
     const auto hasVvproj = selectedVvprojFile.existsAsFile();
     const auto isUiLocked = isVoicevoxUnavailable;
     const auto canGenerate = !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && hasSingerSelection && hasVvproj;
 
-    singerListBox.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
-    singerSelectionLabel.setEnabled(!isUiLocked);
-    selectAllSingersButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
-    clearSingerSelectionButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !selectedSpeakerIds.isEmpty());
-    showAllStylesToggle.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
+    if (!isManualMode)
+    {
+        const auto maxCount = juce::jmax(1, availableSingers.size());
+        autoSingerCountSlider.setRange(1.0, static_cast<double>(maxCount), 1.0);
+        if (autoSingerCountSlider.getValue() > maxCount)
+            autoSingerCountSlider.setValue(static_cast<double>(maxCount), juce::dontSendNotification);
+    }
+
+    selectionModeTabs.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
+    singerListBox.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
+    singerSelectionLabel.setEnabled(isManualMode && !isUiLocked);
+    selectAllSingersButton.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
+    clearSingerSelectionButton.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !selectedSpeakerIds.isEmpty());
+    showAllStylesToggle.setEnabled(isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
+    autoSelectionMethodCombo.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
+    autoSingerCountSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && !availableSingers.isEmpty());
+    autoPanWidthSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     selectVvprojButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     generateVoicevoxButton.setEnabled(canGenerate);
     generateVoicevoxButton.setColour(juce::TextButton::buttonColourId,
@@ -694,6 +813,20 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
     singerSelectionLabel.setColour(juce::Label::backgroundColourId, juce::Colours::white);
     singerSelectionLabel.setColour(juce::Label::textColourId, text);
     singerSelectionLabel.setColour(juce::Label::outlineColourId, accent.darker(0.2f));
+    autoSelectionMethodLabel.setColour(juce::Label::textColourId, text);
+    autoSingerCountLabel.setColour(juce::Label::textColourId, text);
+    autoPanWidthLabel.setColour(juce::Label::textColourId, text);
+    autoSelectionMethodCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    autoSelectionMethodCombo.setColour(juce::ComboBox::textColourId, text);
+    autoSelectionMethodCombo.setColour(juce::ComboBox::outlineColourId, accent.darker(0.2f));
+    autoSingerCountSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.18f));
+    autoSingerCountSlider.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour::fromRGB(177, 204, 183));
+    autoSingerCountSlider.setColour(juce::Slider::textBoxTextColourId, text);
+    autoSingerCountSlider.setColour(juce::Slider::textBoxOutlineColourId, accent.darker(0.2f));
+    autoPanWidthSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.25f));
+    autoPanWidthSlider.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour::fromRGB(177, 204, 183));
+    autoPanWidthSlider.setColour(juce::Slider::textBoxTextColourId, text);
+    autoPanWidthSlider.setColour(juce::Slider::textBoxOutlineColourId, accent.darker(0.2f));
 
     selectAllSingersButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGB(124, 188, 136));
     selectAllSingersButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
@@ -917,23 +1050,67 @@ void VVChorusPlayerAudioProcessorEditor::resized()
         auto row = area.removeFromTop(controlHeight);
         singerStepLabel.setBounds(row.removeFromLeft(labelWidth));
         row.removeFromLeft(spacing);
-        showAllStylesToggle.setBounds(row.removeFromRight(buttonWidth));
+        selectionModeTabs.setBounds(row.removeFromRight(juce::jmin(360, row.getWidth())));
     }
     area.removeFromTop(spacing / 2);
 
+    if (singerSelectionMode == SingerSelectionMode::manual)
     {
-        auto row = area.removeFromTop(controlHeight);
-        singerSelectionLabel.setBounds(row.removeFromLeft(juce::jmax(160, getWidth() / 4)));
-        row.removeFromLeft(spacing / 2);
-        clearSingerSelectionButton.setBounds(row.removeFromRight(juce::jmin(140, buttonWidth)));
-        row.removeFromRight(spacing / 2);
-        selectAllSingersButton.setBounds(row.removeFromRight(juce::jmin(120, buttonWidth / 2 + 40)));
-    }
-    area.removeFromTop(spacing / 2);
+        {
+            auto row = area.removeFromTop(controlHeight);
+            showAllStylesToggle.setBounds(row.removeFromRight(buttonWidth));
+            autoSelectionMethodLabel.setBounds({});
+            autoSelectionMethodCombo.setBounds({});
+            autoSingerCountLabel.setBounds({});
+            autoSingerCountSlider.setBounds({});
+            autoPanWidthLabel.setBounds({});
+            autoPanWidthSlider.setBounds({});
+        }
+        area.removeFromTop(spacing / 2);
 
-    const auto singerListHeight = juce::jlimit(96, 180, getHeight() / 6);
-    singerListBox.setBounds(area.removeFromTop(singerListHeight));
-    area.removeFromTop(spacing);
+        {
+            auto row = area.removeFromTop(controlHeight);
+            singerSelectionLabel.setBounds(row.removeFromLeft(juce::jmax(160, getWidth() / 4)));
+            row.removeFromLeft(spacing / 2);
+            clearSingerSelectionButton.setBounds(row.removeFromRight(juce::jmin(140, buttonWidth)));
+            row.removeFromRight(spacing / 2);
+            selectAllSingersButton.setBounds(row.removeFromRight(juce::jmin(120, buttonWidth / 2 + 40)));
+        }
+        area.removeFromTop(spacing / 2);
+
+        const auto singerListHeight = juce::jlimit(96, 180, getHeight() / 6);
+        singerListBox.setBounds(area.removeFromTop(singerListHeight));
+        area.removeFromTop(spacing);
+    }
+    else
+    {
+        showAllStylesToggle.setBounds({});
+        singerSelectionLabel.setBounds({});
+        selectAllSingersButton.setBounds({});
+        clearSingerSelectionButton.setBounds({});
+        singerListBox.setBounds({});
+
+        {
+            auto row = area.removeFromTop(controlHeight);
+            autoSelectionMethodLabel.setBounds(row.removeFromLeft(juce::jmax(120, labelWidth - 20)));
+            row.removeFromLeft(spacing / 2);
+            autoSelectionMethodCombo.setBounds(row.removeFromLeft(juce::jmin(220, row.getWidth())));
+        }
+        area.removeFromTop(spacing / 2);
+
+        const auto knobAreaHeight = juce::jlimit(118, 170, getHeight() / 5);
+        auto knobsArea = area.removeFromTop(knobAreaHeight);
+        auto left = knobsArea.removeFromLeft(knobsArea.getWidth() / 2).reduced(6, 0);
+        auto right = knobsArea.reduced(6, 0);
+        const auto knobLabelHeight = juce::jmin(26, controlHeight);
+
+        autoSingerCountLabel.setBounds(left.removeFromTop(knobLabelHeight));
+        autoSingerCountSlider.setBounds(left);
+        autoPanWidthLabel.setBounds(right.removeFromTop(knobLabelHeight));
+        autoPanWidthSlider.setBounds(right);
+
+        area.removeFromTop(spacing);
+    }
 
     {
         auto row = area.removeFromTop(controlHeight);

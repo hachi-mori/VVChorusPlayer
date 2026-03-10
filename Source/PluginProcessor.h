@@ -66,6 +66,11 @@ public:
                                         int trackIndex,
                                         const juce::Array<voicevox::SingerStyle> &singers,
                                         const juce::String &baseUrl = "http://127.0.0.1:50021");
+  juce::Result generateChorusFromVvproj(const juce::File &vvprojFile,
+                                        int trackIndex,
+                                        const juce::Array<voicevox::SingerStyle> &singers,
+                                        const juce::Array<float> &panPositions,
+                                        const juce::String &baseUrl = "http://127.0.0.1:50021");
   float getVoicevoxProgress() const noexcept;
   juce::String getVoicevoxStatus() const;
   bool hasLoadedFile() const noexcept;
