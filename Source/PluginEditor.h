@@ -43,7 +43,10 @@ private:
   void timerCallback() override;
   void startFetchSingers();
   void startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers,
+                               int trackIndex,
                                const juce::Array<float> &panPositions = {});
+  void refreshVvprojTrackList();
+  int getSelectedTrackIndex() const;
   void rebuildSingerListItems();
   juce::Array<voicevox::SingerStyle> getSelectedSingers() const;
   juce::Array<voicevox::SingerStyle> getAutoSelectedSingers() const;
@@ -79,6 +82,7 @@ private:
   juce::Label fileStepLabel;
   juce::TextButton selectVvprojButton;
   juce::Label selectedVvprojLabel;
+  juce::ComboBox vvprojTrackCombo;
   juce::Label generateStepLabel;
   juce::TextButton generateVoicevoxButton;
   juce::Label voicevoxWarningLabel;

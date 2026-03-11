@@ -191,6 +191,60 @@ namespace
         return outTrack.isObject();
     }
 
+    bool tryCollectTrackNamesFromSong(const juce::var &song, juce::StringArray &outTrackNames)
+    {
+        outTrackNames.clearQuick();
+
+        const auto *songObj = song.getDynamicObject();
+        if (songObj == nullptr)
+            return false;
+
+        const auto tracks = songObj->getProperty("tracks");
+        const auto *tracksObj = tracks.getDynamicObject();
+        if (tracksObj == nullptr)
+            return false;
+
+        auto appendTrackName = [&outTrackNames](const juce::var &trackVar, const juce::String &fallback)
+        {
+            juce::String name = fallback;
+            if (const auto *trackObj = trackVar.getDynamicObject(); trackObj != nullptr)
+            {
+                const auto trackNameVar = trackObj->getProperty("name");
+                if (trackNameVar.isString())
+                {
+                    const auto parsed = trackNameVar.toString().trim();
+                    if (parsed.isNotEmpty())
+                        name = parsed;
+                }
+            }
+
+            outTrackNames.add(name);
+        };
+
+        const auto trackOrder = songObj->getProperty("trackOrder");
+        if (const auto *orderArray = trackOrder.getArray(); orderArray != nullptr && !orderArray->isEmpty())
+        {
+            for (int i = 0; i < orderArray->size(); ++i)
+            {
+                const auto key = orderArray->getReference(i).toString();
+                const auto trackVar = tracksObj->getProperty(key);
+                if (!trackVar.isObject())
+                    continue;
+
+                appendTrackName(trackVar, jp(u8"トラック") + juce::String(i + 1));
+            }
+        }
+
+        if (!outTrackNames.isEmpty())
+            return true;
+
+        const auto &props = tracksObj->getProperties();
+        for (int i = 0; i < props.size(); ++i)
+            appendTrackName(props.getValueAt(i), jp(u8"トラック") + juce::String(i + 1));
+
+        return !outTrackNames.isEmpty();
+    }
+
     bool tryComputeMeanPitchFromVvproj(const juce::File &vvprojFile, int trackIndex, double &outMeanKey)
     {
         if (!vvprojFile.existsAsFile())
@@ -386,6 +440,12 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     previewLabel.setMinimumHorizontalScale(1.0f);
     selectedVvprojLabel.setText(jp(u8"未選択"), juce::dontSendNotification);
     selectedVvprojLabel.setJustificationType(juce::Justification::centredLeft);
+    vvprojTrackCombo.setTextWhenNothingSelected(jp(u8"トラック未選択"));
+    vvprojTrackCombo.onChange = [this]
+    {
+        updateActionState();
+    };
+    vvprojTrackCombo.setEnabled(false);
 
     addAndMakeVisible(singerStepLabel);
     addAndMakeVisible(fileStepLabel);
@@ -520,11 +580,13 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
                                        else
                                            selectedVvprojLabel.setText(jp(u8"未選択"), juce::dontSendNotification);
 
+                                       refreshVvprojTrackList();
                                        updateActionState();
                                    });
     };
 
     addAndMakeVisible(selectedVvprojLabel);
+    addAndMakeVisible(vvprojTrackCombo);
 
     addAndMakeVisible(voicevoxWarningLabel);
     voicevoxWarningLabel.setJustificationType(juce::Justification::centred);
@@ -686,7 +748,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
             return;
         }
 
-        startVoicevoxGeneration(selectedSingers, panPositions);
+        startVoicevoxGeneration(selectedSingers, getSelectedTrackIndex(), panPositions);
     };
 
     applyTheme();
@@ -694,6 +756,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     setResizeLimits(600, 760, 1240, 1180);
     setSize(860, 960);
     updateSelectionModeUi();
+    refreshVvprojTrackList();
 
     startTimerHz(30);
     startFetchSingers();
@@ -887,6 +950,47 @@ void VVChorusPlayerAudioProcessorEditor::rebuildSingerListItems()
     updateSingerSelectionLabel();
 }
 
+void VVChorusPlayerAudioProcessorEditor::refreshVvprojTrackList()
+{
+    const auto previousTrackIndex = getSelectedTrackIndex();
+
+    vvprojTrackCombo.clear(juce::dontSendNotification);
+    vvprojTrackCombo.setTextWhenNothingSelected(jp(u8"トラック未選択"));
+
+    if (!selectedVvprojFile.existsAsFile())
+    {
+        vvprojTrackCombo.setEnabled(false);
+        return;
+    }
+
+    juce::StringArray trackNames;
+    const auto root = juce::JSON::parse(selectedVvprojFile);
+    if (const auto *rootObj = root.getDynamicObject(); rootObj != nullptr)
+    {
+        const auto song = rootObj->getProperty("song");
+        tryCollectTrackNamesFromSong(song, trackNames);
+    }
+
+    if (trackNames.isEmpty())
+    {
+        vvprojTrackCombo.addItem(jp(u8"1: トラック1"), 1);
+        vvprojTrackCombo.setSelectedId(1, juce::dontSendNotification);
+        return;
+    }
+
+    for (int i = 0; i < trackNames.size(); ++i)
+        vvprojTrackCombo.addItem(juce::String(i + 1) + ": " + trackNames[i], i + 1);
+
+    const auto selectedId = juce::jlimit(1, trackNames.size(), previousTrackIndex + 1);
+    vvprojTrackCombo.setSelectedId(selectedId, juce::dontSendNotification);
+}
+
+int VVChorusPlayerAudioProcessorEditor::getSelectedTrackIndex() const
+{
+    const auto selectedId = vvprojTrackCombo.getSelectedId();
+    return selectedId > 0 ? selectedId - 1 : 0;
+}
+
 juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getSelectedSingers() const
 {
     juce::Array<voicevox::SingerStyle> selectedSingers;
@@ -955,7 +1059,7 @@ juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getAutoSe
     {
         constexpr double referenceG4 = 67.0;
         double meanKey = referenceG4;
-        const auto hasMean = tryComputeMeanPitchFromVvproj(selectedVvprojFile, 0, meanKey);
+        const auto hasMean = tryComputeMeanPitchFromVvproj(selectedVvprojFile, getSelectedTrackIndex(), meanKey);
         const auto requiredShift = static_cast<int>(std::lround((hasMean ? meanKey : referenceG4) - referenceG4));
 
         struct Candidate
@@ -1042,6 +1146,7 @@ void VVChorusPlayerAudioProcessorEditor::updateSingerSelectionLabel()
 }
 
 void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers,
+                                                                 int trackIndex,
                                                                  const juce::Array<float> &panPositions)
 {
     isGeneratingVoicevox = true;
@@ -1058,10 +1163,10 @@ void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Arr
     auto *processor = &audioProcessor;
     const auto safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this);
 
-    std::thread([safeThis, processor, selectedFile = selectedVvprojFile, selectedSingers, panPositions, baseUrl = voicevoxBaseUrl]
+    std::thread([safeThis, processor, selectedFile = selectedVvprojFile, selectedTrackIndex = juce::jmax(0, trackIndex), selectedSingers, panPositions, baseUrl = voicevoxBaseUrl]
                 {
         const auto result = processor->generateChorusFromVvproj (selectedFile,
-                                                                  0,
+                                                                  selectedTrackIndex,
                                                                   selectedSingers,
                                                                   panPositions,
                                                                   baseUrl);
@@ -1153,6 +1258,9 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
     if (isManualMode)
         autoSingerCountSlider.setEnabled(false);
     selectVvprojButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
+    vvprojTrackCombo.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox
+                                && selectedVvprojFile.existsAsFile()
+                                && vvprojTrackCombo.getNumItems() > 0);
     generateVoicevoxButton.setEnabled(canGenerate);
     const auto accent = juce::Colour::fromRGB(163, 216, 173);
     const auto disabledFill = juce::Colour::fromRGB(203, 228, 208).darker(0.06f);
@@ -1202,6 +1310,9 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
     autoVoiceTypeCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
     autoVoiceTypeCombo.setColour(juce::ComboBox::textColourId, text);
     autoVoiceTypeCombo.setColour(juce::ComboBox::outlineColourId, border);
+    vvprojTrackCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white.withAlpha(0.98f));
+    vvprojTrackCombo.setColour(juce::ComboBox::textColourId, text);
+    vvprojTrackCombo.setColour(juce::ComboBox::outlineColourId, border);
     autoSingerCountSlider.setColour(juce::Slider::rotarySliderFillColourId, accent.darker(0.2f));
     autoSingerCountSlider.setColour(juce::Slider::rotarySliderOutlineColourId, accentSoft.darker(0.05f));
     autoSingerCountSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.32f));
@@ -1499,7 +1610,14 @@ void VVChorusPlayerAudioProcessorEditor::resized()
     }
     area.removeFromTop(spacing);
 
-    selectedVvprojLabel.setBounds(area.removeFromTop(controlHeight));
+    {
+        auto row = area.removeFromTop(controlHeight);
+        const auto trackComboWidth = juce::jlimit(160, 320, static_cast<int>(getWidth() / 3.2));
+        auto trackArea = row.removeFromRight(trackComboWidth);
+        row.removeFromRight(juce::jmax(6, spacing / 2));
+        selectedVvprojLabel.setBounds(row);
+        vvprojTrackCombo.setBounds(trackArea);
+    }
     area.removeFromTop(spacing);
     fileSectionArea = buildSectionArea(fileTop, area.getY());
 
