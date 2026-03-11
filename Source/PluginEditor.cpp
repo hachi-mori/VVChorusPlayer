@@ -99,6 +99,15 @@ namespace
         return text.trim();
     }
 
+    juce::String buildSingerNamesCsv(const juce::Array<voicevox::SingerStyle> &singers)
+    {
+        juce::StringArray names;
+        names.ensureStorageAllocated(singers.size());
+        for (const auto &singer : singers)
+            names.add(singer.singerName + " (" + singer.styleName + ")");
+        return names.joinIntoString(", ");
+    }
+
     bool containsSpeakerId(const juce::Array<int> &speakerIds, int speakerId)
     {
         return speakerIds.contains(speakerId);
@@ -420,6 +429,12 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         juce::LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypefaceName(uiFont);
 
     controlButtonLookAndFeel = std::make_unique<ControlButtonLookAndFeel>();
+    const auto restoredSelectionState = audioProcessor.getChorusSelectionState();
+    singerSelectionMode = restoredSelectionState.singerSelectionMode == static_cast<int>(SingerSelectionMode::autoArrange)
+                              ? SingerSelectionMode::autoArrange
+                              : SingerSelectionMode::manual;
+    isShowingAllStyles = restoredSelectionState.showAllStyles;
+    selectedSpeakerIds = restoredSelectionState.selectedSpeakerIds;
 
     selectVvprojButton.setButtonText(jp(u8"vvprojを選択"));
     generateVoicevoxButton.setButtonText(jp(u8"生成スタート"));
@@ -430,6 +445,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     playButton.setLookAndFeel(controlButtonLookAndFeel.get());
     stopButton.setLookAndFeel(controlButtonLookAndFeel.get());
     exportAudioButton.setLookAndFeel(controlButtonLookAndFeel.get());
+    exportSingerNamesButton.setLookAndFeel(controlButtonLookAndFeel.get());
 
     fileStepLabel.setText(jp(u8"1. VOICEVOXプロジェクトファイルを選択"), juce::dontSendNotification);
     singerStepLabel.setText(jp(u8"2. 歌唱キャラクターを選ぶ"), juce::dontSendNotification);
@@ -438,14 +454,19 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     singerStepLabel.setMinimumHorizontalScale(1.0f);
     generateStepLabel.setMinimumHorizontalScale(1.0f);
     previewLabel.setMinimumHorizontalScale(1.0f);
-    selectedVvprojLabel.setText(jp(u8"未選択"), juce::dontSendNotification);
+    selectedVvprojLabel.setText(audioProcessor.hasSelectedVvprojFile()
+                                    ? audioProcessor.getSelectedVvprojFile().getFileName()
+                                    : jp(u8"未選択"),
+                                juce::dontSendNotification);
     selectedVvprojLabel.setJustificationType(juce::Justification::centredLeft);
     vvprojTrackCombo.setTextWhenNothingSelected(jp(u8"トラック未選択"));
     vvprojTrackCombo.onChange = [this]
     {
+        audioProcessor.setSelectedTrackIndex(getSelectedTrackIndex());
         updateActionState();
     };
     vvprojTrackCombo.setEnabled(false);
+    observedVoicevoxGenerationNonce = audioProcessor.getVoicevoxGenerationNonce();
 
     addAndMakeVisible(singerStepLabel);
     addAndMakeVisible(fileStepLabel);
@@ -476,6 +497,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         for (const auto &singer : availableSingers)
             selectedSpeakerIds.addIfNotAlreadyThere(singer.speakerId);
 
+        persistSelectionStateToProcessor();
         singerListBox.updateContent();
         singerListBox.repaint();
         updateSingerSelectionLabel();
@@ -490,6 +512,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
             return;
 
         selectedSpeakerIds.clearQuick();
+        persistSelectionStateToProcessor();
         singerListBox.updateContent();
         singerListBox.repaint();
         updateSingerSelectionLabel();
@@ -504,10 +527,13 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     autoSelectionMethodCombo.addItem(jp(u8"オート"), autoSelectionMethodRange);
     autoSelectionMethodCombo.addItem(jp(u8"ランダム"), autoSelectionMethodRandom);
     autoSelectionMethodCombo.addItem(jp(u8"パート別"), autoSelectionMethodVoiceQuality);
-    autoSelectionMethodCombo.setSelectedId(autoSelectionMethodRange, juce::dontSendNotification);
+    autoSelectionMethodCombo.setSelectedId(restoredSelectionState.autoSelectionMethodId, juce::dontSendNotification);
+    if (autoSelectionMethodCombo.getSelectedId() == 0)
+        autoSelectionMethodCombo.setSelectedId(autoSelectionMethodRange, juce::dontSendNotification);
     autoSelectionMethodCombo.onChange = [this]
     {
         updateSelectionModeUi();
+        persistSelectionStateToProcessor();
         updateActionState();
         resized();
     };
@@ -524,9 +550,12 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     autoVoiceTypeCombo.addItem(jp(u8"アルト"), autoVoiceTypeAlto);
     autoVoiceTypeCombo.addItem(jp(u8"テノール"), autoVoiceTypeTenor);
     autoVoiceTypeCombo.addItem(jp(u8"バス"), autoVoiceTypeBass);
-    autoVoiceTypeCombo.setSelectedId(autoVoiceTypeFemale, juce::dontSendNotification);
+    autoVoiceTypeCombo.setSelectedId(restoredSelectionState.autoVoiceTypeId, juce::dontSendNotification);
+    if (autoVoiceTypeCombo.getSelectedId() == 0)
+        autoVoiceTypeCombo.setSelectedId(autoVoiceTypeFemale, juce::dontSendNotification);
     autoVoiceTypeCombo.onChange = [this]
     {
+        persistSelectionStateToProcessor();
         updateActionState();
         resized();
     };
@@ -545,7 +574,12 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     autoSingerCountSlider.setSliderSnapsToMousePosition(true);
     autoSingerCountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 18);
     autoSingerCountSlider.setRange(1.0, 2.0, 1.0);
-    autoSingerCountSlider.setValue(1.0, juce::dontSendNotification);
+    autoSingerCountSlider.setValue(static_cast<double>(juce::jmax(1, restoredSelectionState.autoSingerCount)), juce::dontSendNotification);
+    autoSingerCountSlider.onValueChange = [this]
+    {
+        persistSelectionStateToProcessor();
+        updateActionState();
+    };
 
     addAndMakeVisible(showAllStylesToggle);
     showAllStylesToggle.setButtonText(jp(u8"表示"));
@@ -559,6 +593,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
             return;
 
         isShowingAllStyles = showAllStylesToggle.getToggleState();
+        persistSelectionStateToProcessor();
         startFetchSingers();
     };
 
@@ -572,13 +607,13 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
         vvprojChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                                    [this](const juce::FileChooser &chooser)
                                    {
-                                       selectedVvprojFile = chooser.getResult();
+                                       const auto selectedFile = chooser.getResult();
                                        vvprojChooser.reset();
-
-                                       if (selectedVvprojFile.existsAsFile())
-                                           selectedVvprojLabel.setText(selectedVvprojFile.getFileName(), juce::dontSendNotification);
-                                       else
-                                           selectedVvprojLabel.setText(jp(u8"未選択"), juce::dontSendNotification);
+                                       audioProcessor.setSelectedVvprojFile(selectedFile);
+                                       selectedVvprojLabel.setText(audioProcessor.hasSelectedVvprojFile()
+                                                                       ? audioProcessor.getSelectedVvprojFile().getFileName()
+                                                                       : jp(u8"未選択"),
+                                                                   juce::dontSendNotification);
 
                                        refreshVvprojTrackList();
                                        updateActionState();
@@ -629,8 +664,9 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
             return;
         }
 
-        auto baseName = selectedVvprojFile.existsAsFile()
-                            ? selectedVvprojFile.getFileNameWithoutExtension()
+        const auto selectedProjectFile = audioProcessor.getSelectedVvprojFile();
+        auto baseName = selectedProjectFile.existsAsFile()
+                            ? selectedProjectFile.getFileNameWithoutExtension()
                             : juce::File(audioProcessor.getLoadedFileName()).getFileNameWithoutExtension();
 
         if (baseName.isEmpty())
@@ -683,10 +719,90 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
                                               return;
                                           }
 
-                                          juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
-                                                                                 jp(u8"書き出し完了"),
-                                                                                 jp(u8"保存しました:\n") + target.getFullPathName());
-                                      });
+                                           juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
+                                                                                  jp(u8"書き出し完了"),
+                                                                                  jp(u8"保存しました:\n") + target.getFullPathName());
+                                       });
+    };
+
+    addAndMakeVisible(exportSingerNamesButton);
+    exportSingerNamesButton.setButtonText(jp(u8"歌唱キャラクター名を出力"));
+    exportSingerNamesButton.onClick = [this]
+    {
+        const auto singerNamesCsv = getSingerNamesCsvForExport();
+        if (singerNamesCsv.isEmpty())
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                   jp(u8"歌唱キャラクター名"),
+                                                   jp(u8"先に歌声を生成してください"));
+            return;
+        }
+
+        juce::PopupMenu menu;
+        menu.addItem(1, jp(u8"クリップボードにコピー"));
+        menu.addItem(2, jp(u8"テキストファイルに保存"));
+        const auto safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(exportSingerNamesButton),
+                           [safeThis, singerNamesCsv](int selectedId)
+                           {
+                               if (safeThis == nullptr)
+                                   return;
+
+                               if (selectedId == 1)
+                               {
+                                   juce::SystemClipboard::copyTextToClipboard(singerNamesCsv);
+                                   juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
+                                                                          jp(u8"コピー完了"),
+                                                                          jp(u8"歌唱キャラクター名をクリップボードにコピーしました\n\n") + singerNamesCsv);
+                                   return;
+                               }
+
+                               if (selectedId != 2)
+                                   return;
+
+                               const auto selectedProjectFile = safeThis->audioProcessor.getSelectedVvprojFile();
+                               auto baseName = selectedProjectFile.existsAsFile()
+                                                   ? selectedProjectFile.getFileNameWithoutExtension()
+                                                   : juce::File(safeThis->audioProcessor.getLoadedFileName()).getFileNameWithoutExtension();
+                               if (baseName.isEmpty())
+                                   baseName = "voice";
+
+                               const auto initialFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                                                            .getChildFile(sanitizeFileNamePart(baseName) + "-singers.txt");
+
+                               safeThis->exportSingerNamesChooser = std::make_unique<juce::FileChooser>(jp(u8"歌唱キャラクター名の保存先を選択"),
+                                                                                                          initialFile,
+                                                                                                          "*.txt");
+                               safeThis->exportSingerNamesChooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                                                                             [safeThis, singerNamesCsv](const juce::FileChooser &chooser)
+                                                                             {
+                                                                                 if (safeThis == nullptr)
+                                                                                     return;
+
+                                                                                 auto target = chooser.getResult();
+                                                                                 safeThis->exportSingerNamesChooser.reset();
+
+                                                                                 if (target == juce::File())
+                                                                                     return;
+
+                                                                                 if (!target.hasFileExtension("txt"))
+                                                                                     target = target.withFileExtension("txt");
+
+                                                                                 const auto saved = target.replaceWithText(singerNamesCsv + "\n");
+                                                                                 if (!saved)
+                                                                                 {
+                                                                                     juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                                                                                            jp(u8"保存失敗"),
+                                                                                                                            jp(u8"歌唱キャラクター名の保存に失敗しました"));
+                                                                                     return;
+                                                                                 }
+
+                                                                                 juce::SystemClipboard::copyTextToClipboard(singerNamesCsv);
+                                                                                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
+                                                                                                                        jp(u8"保存完了"),
+                                                                                                                        jp(u8"保存しました:\n") + target.getFullPathName() + jp(u8"\n\nクリップボードにもコピーしました"));
+                                                                             });
+                           });
     };
 
     addAndMakeVisible(previewPositionSlider);
@@ -742,7 +858,7 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
             return;
         }
 
-        if (!selectedVvprojFile.existsAsFile())
+        if (!audioProcessor.hasSelectedVvprojFile())
         {
             statusLabel.setText(jp(u8"先にvvprojを選択してください"), juce::dontSendNotification);
             return;
@@ -755,8 +871,18 @@ VVChorusPlayerAudioProcessorEditor::VVChorusPlayerAudioProcessorEditor(VVChorusP
     setResizable(true, true);
     setResizeLimits(600, 760, 1240, 1180);
     setSize(860, 960);
+    updateSingerSelectionLabel();
     updateSelectionModeUi();
     refreshVvprojTrackList();
+    persistSelectionStateToProcessor();
+    isGeneratingVoicevox = audioProcessor.isVoicevoxGenerating();
+    if (isGeneratingVoicevox)
+    {
+        displayedProgress = juce::jlimit(0.0, 1.0, static_cast<double>(audioProcessor.getVoicevoxProgress()));
+        lastRawProgress = static_cast<float>(displayedProgress);
+        lastTimerSeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
+        lastRawProgressSeconds = lastTimerSeconds;
+    }
 
     startTimerHz(30);
     startFetchSingers();
@@ -771,6 +897,7 @@ VVChorusPlayerAudioProcessorEditor::~VVChorusPlayerAudioProcessorEditor()
     playButton.setLookAndFeel(nullptr);
     stopButton.setLookAndFeel(nullptr);
     exportAudioButton.setLookAndFeel(nullptr);
+    exportSingerNamesButton.setLookAndFeel(nullptr);
     singerListBox.setModel(nullptr);
     showAllStylesToggle.setLookAndFeel(nullptr);
 }
@@ -833,6 +960,7 @@ void VVChorusPlayerAudioProcessorEditor::listBoxItemClicked(int rowNumber, const
     const auto &singer = availableSingers.getReference(rowNumber);
     const auto wasSelected = containsSpeakerId(selectedSpeakerIds, singer.speakerId);
     setSpeakerSelected(selectedSpeakerIds, singer.speakerId, !wasSelected);
+    persistSelectionStateToProcessor();
     updateSingerSelectionLabel();
     updateActionState();
     singerListBox.repaintRow(rowNumber);
@@ -860,6 +988,7 @@ void VVChorusPlayerAudioProcessorEditor::syncSelectionModeFromTab()
         showAllStylesToggle.setToggleState(false, juce::dontSendNotification);
     }
 
+    persistSelectionStateToProcessor();
     updateSelectionModeUi();
     startFetchSingers();
 }
@@ -944,6 +1073,7 @@ void VVChorusPlayerAudioProcessorEditor::rebuildSingerListItems()
     }
 
     selectedSpeakerIds.swapWith(validSelectedSpeakerIds);
+    persistSelectionStateToProcessor();
 
     singerListBox.updateContent();
     singerListBox.repaint();
@@ -952,19 +1082,23 @@ void VVChorusPlayerAudioProcessorEditor::rebuildSingerListItems()
 
 void VVChorusPlayerAudioProcessorEditor::refreshVvprojTrackList()
 {
-    const auto previousTrackIndex = getSelectedTrackIndex();
+    const auto previousTrackIndex = audioProcessor.getSelectedTrackIndex();
 
     vvprojTrackCombo.clear(juce::dontSendNotification);
     vvprojTrackCombo.setTextWhenNothingSelected(jp(u8"トラック未選択"));
 
-    if (!selectedVvprojFile.existsAsFile())
+    const auto selectedProjectFile = audioProcessor.getSelectedVvprojFile();
+    if (!selectedProjectFile.existsAsFile())
     {
         vvprojTrackCombo.setEnabled(false);
+        selectedVvprojLabel.setText(jp(u8"未選択"), juce::dontSendNotification);
         return;
     }
 
+    selectedVvprojLabel.setText(selectedProjectFile.getFileName(), juce::dontSendNotification);
+
     juce::StringArray trackNames;
-    const auto root = juce::JSON::parse(selectedVvprojFile);
+    const auto root = juce::JSON::parse(selectedProjectFile);
     if (const auto *rootObj = root.getDynamicObject(); rootObj != nullptr)
     {
         const auto song = rootObj->getProperty("song");
@@ -975,6 +1109,7 @@ void VVChorusPlayerAudioProcessorEditor::refreshVvprojTrackList()
     {
         vvprojTrackCombo.addItem(jp(u8"1: トラック1"), 1);
         vvprojTrackCombo.setSelectedId(1, juce::dontSendNotification);
+        audioProcessor.setSelectedTrackIndex(0);
         return;
     }
 
@@ -983,6 +1118,7 @@ void VVChorusPlayerAudioProcessorEditor::refreshVvprojTrackList()
 
     const auto selectedId = juce::jlimit(1, trackNames.size(), previousTrackIndex + 1);
     vvprojTrackCombo.setSelectedId(selectedId, juce::dontSendNotification);
+    audioProcessor.setSelectedTrackIndex(selectedId - 1);
 }
 
 int VVChorusPlayerAudioProcessorEditor::getSelectedTrackIndex() const
@@ -1059,7 +1195,9 @@ juce::Array<voicevox::SingerStyle> VVChorusPlayerAudioProcessorEditor::getAutoSe
     {
         constexpr double referenceG4 = 67.0;
         double meanKey = referenceG4;
-        const auto hasMean = tryComputeMeanPitchFromVvproj(selectedVvprojFile, getSelectedTrackIndex(), meanKey);
+        const auto hasMean = tryComputeMeanPitchFromVvproj(audioProcessor.getSelectedVvprojFile(),
+                                                           getSelectedTrackIndex(),
+                                                           meanKey);
         const auto requiredShift = static_cast<int>(std::lround((hasMean ? meanKey : referenceG4) - referenceG4));
 
         struct Candidate
@@ -1145,57 +1283,62 @@ void VVChorusPlayerAudioProcessorEditor::updateSingerSelectionLabel()
     singerSelectionLabel.setText(juce::String(selectedSpeakerIds.size()) + jp(u8"キャラ選択中"), juce::dontSendNotification);
 }
 
+void VVChorusPlayerAudioProcessorEditor::persistSelectionStateToProcessor()
+{
+    VVChorusPlayerAudioProcessor::ChorusSelectionState state;
+    state.singerSelectionMode = static_cast<int>(singerSelectionMode);
+    state.showAllStyles = isShowingAllStyles;
+    state.autoSelectionMethodId = juce::jmax(1, autoSelectionMethodCombo.getSelectedId());
+    state.autoVoiceTypeId = juce::jmax(1, autoVoiceTypeCombo.getSelectedId());
+    state.autoSingerCount = juce::jmax(1, static_cast<int>(std::lround(autoSingerCountSlider.getValue())));
+    state.selectedSpeakerIds = selectedSpeakerIds;
+    audioProcessor.setChorusSelectionState(state);
+}
+
+juce::String VVChorusPlayerAudioProcessorEditor::getSingerNamesCsvForExport() const
+{
+    auto singerNamesCsv = audioProcessor.getLastGeneratedSingerNamesCsv().trim();
+    if (singerNamesCsv.isNotEmpty())
+        return singerNamesCsv;
+
+    const auto selectedSingers = singerSelectionMode == SingerSelectionMode::manual
+                                     ? getSelectedSingers()
+                                     : getAutoSelectedSingers();
+    return buildSingerNamesCsv(selectedSingers).trim();
+}
+
 void VVChorusPlayerAudioProcessorEditor::startVoicevoxGeneration(const juce::Array<voicevox::SingerStyle> &selectedSingers,
                                                                  int trackIndex,
                                                                  const juce::Array<float> &panPositions)
 {
+    audioProcessor.setSelectedTrackIndex(juce::jmax(0, trackIndex));
+    const auto startResult = audioProcessor.startChorusGeneration(selectedSingers, panPositions, voicevoxBaseUrl);
+    if (startResult.failed())
+    {
+        const auto message = jp(u8"VOICEVOX生成失敗: ") + startResult.getErrorMessage();
+        juce::Logger::writeToLog(message);
+        statusLabel.setText(jp(u8"生成失敗（詳細はポップアップ/ログ）"), juce::dontSendNotification);
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                               jp(u8"VOICEVOX エラー"),
+                                               message);
+        updateActionState();
+        return;
+    }
+
     isGeneratingVoicevox = true;
     displayedProgress = 0.0;
     lastRawProgress = 0.0f;
     lastTimerSeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
     lastRawProgressSeconds = lastTimerSeconds;
     secondsPerPercentEstimate = 0.12;
-
-    updateActionState();
     statusLabel.setText(jp(u8"合唱生成を開始...\n選択キャラ数: ") + juce::String(selectedSingers.size()),
                         juce::dontSendNotification);
-
-    auto *processor = &audioProcessor;
-    const auto safeThis = juce::Component::SafePointer<VVChorusPlayerAudioProcessorEditor>(this);
-
-    std::thread([safeThis, processor, selectedFile = selectedVvprojFile, selectedTrackIndex = juce::jmax(0, trackIndex), selectedSingers, panPositions, baseUrl = voicevoxBaseUrl]
-                {
-        const auto result = processor->generateChorusFromVvproj (selectedFile,
-                                                                  selectedTrackIndex,
-                                                                  selectedSingers,
-                                                                  panPositions,
-                                                                  baseUrl);
-
-        juce::MessageManager::callAsync ([safeThis, result]
-        {
-            if (safeThis == nullptr)
-                return;
-
-            safeThis->isGeneratingVoicevox = false;
-            safeThis->updateActionState();
-
-            if (result.wasOk())
-                safeThis->statusLabel.setText (jp(u8"生成完了: 再生準備ができました"), juce::dontSendNotification);
-            else
-            {
-                const auto message = jp(u8"VOICEVOX生成失敗: ") + result.getErrorMessage();
-                juce::Logger::writeToLog (message);
-                safeThis->statusLabel.setText (jp(u8"生成失敗（詳細はポップアップ/ログ）"), juce::dontSendNotification);
-                juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
-                                                        jp(u8"VOICEVOX エラー"),
-                                                        message);
-            }
-        }); })
-        .detach();
+    updateActionState();
 }
 
 void VVChorusPlayerAudioProcessorEditor::updateActionState()
 {
+    isGeneratingVoicevox = audioProcessor.isVoicevoxGenerating();
     const auto isManualMode = singerSelectionMode == SingerSelectionMode::manual;
     bool hasSingerSelection = false;
     if (isManualMode)
@@ -1219,7 +1362,7 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
         hasSingerSelection = !availableSingers.isEmpty();
     }
 
-    const auto hasVvproj = selectedVvprojFile.existsAsFile();
+    const auto hasVvproj = audioProcessor.hasSelectedVvprojFile();
     const auto isUiLocked = isVoicevoxUnavailable;
     const auto canGenerate = !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && hasSingerSelection && hasVvproj;
 
@@ -1241,7 +1384,10 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
         const auto sliderMax = juce::jmax(2, maxCount);
         autoSingerCountSlider.setRange(1.0, static_cast<double>(sliderMax), 1.0);
         if (autoSingerCountSlider.getValue() > maxCount)
+        {
             autoSingerCountSlider.setValue(static_cast<double>(maxCount), juce::dontSendNotification);
+            persistSelectionStateToProcessor();
+        }
 
         autoSingerCountSlider.setEnabled(!isManualMode && !isUiLocked && !isLoadingSingers && !isGeneratingVoicevox && effectiveMaxCount > 1);
     }
@@ -1259,7 +1405,7 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
         autoSingerCountSlider.setEnabled(false);
     selectVvprojButton.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox);
     vvprojTrackCombo.setEnabled(!isUiLocked && !isLoadingSingers && !isGeneratingVoicevox
-                                && selectedVvprojFile.existsAsFile()
+                                && audioProcessor.hasSelectedVvprojFile()
                                 && vvprojTrackCombo.getNumItems() > 0);
     generateVoicevoxButton.setEnabled(canGenerate);
     const auto accent = juce::Colour::fromRGB(163, 216, 173);
@@ -1276,6 +1422,9 @@ void VVChorusPlayerAudioProcessorEditor::updateActionState()
     stopButton.setEnabled(!isUiLocked && hasAudio && previewPlaying);
     previewPositionSlider.setEnabled(!isUiLocked && hasAudio);
     exportAudioButton.setEnabled(!isUiLocked && hasAudio && !isGeneratingVoicevox);
+    exportSingerNamesButton.setEnabled(!isUiLocked && !isGeneratingVoicevox
+                                       && hasAudio
+                                       && getSingerNamesCsvForExport().isNotEmpty());
 }
 
 void VVChorusPlayerAudioProcessorEditor::applyTheme()
@@ -1335,6 +1484,8 @@ void VVChorusPlayerAudioProcessorEditor::applyTheme()
 
     exportAudioButton.setColour(juce::TextButton::buttonColourId, accent.darker(0.2f));
     exportAudioButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    exportSingerNamesButton.setColour(juce::TextButton::buttonColourId, accentSoft.darker(0.04f));
+    exportSingerNamesButton.setColour(juce::TextButton::textColourOffId, text);
 
     previewPositionSlider.setColour(juce::Slider::trackColourId, accent.darker(0.3f));
     previewPositionSlider.setColour(juce::Slider::thumbColourId, accent.darker(0.38f));
@@ -1367,6 +1518,27 @@ void VVChorusPlayerAudioProcessorEditor::timerCallback()
         startFetchSingers();
     }
 
+    const auto currentGenerationNonce = audioProcessor.getVoicevoxGenerationNonce();
+    if (currentGenerationNonce != observedVoicevoxGenerationNonce)
+    {
+        observedVoicevoxGenerationNonce = currentGenerationNonce;
+        const auto generationResult = audioProcessor.getLastVoicevoxGenerationResult();
+        if (generationResult.failed())
+        {
+            const auto message = jp(u8"VOICEVOX生成失敗: ") + generationResult.getErrorMessage();
+            juce::Logger::writeToLog(message);
+            statusLabel.setText(jp(u8"生成失敗（詳細はポップアップ/ログ）"), juce::dontSendNotification);
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                   jp(u8"VOICEVOX エラー"),
+                                                   message);
+        }
+        else if (generationResult.wasOk())
+        {
+            statusLabel.setText(jp(u8"生成完了: 再生準備ができました"), juce::dontSendNotification);
+        }
+    }
+
+    isGeneratingVoicevox = audioProcessor.isVoicevoxGenerating();
     refreshPreviewUi();
     updateActionState();
 
@@ -1766,6 +1938,15 @@ void VVChorusPlayerAudioProcessorEditor::resized()
     waveformArea = area.removeFromTop(waveformHeight);
     area.removeFromTop(spacing / 2);
 
-    exportAudioButton.setBounds(area.removeFromTop(exportButtonHeight).withSizeKeepingCentre(juce::jmin(360, area.getWidth()), exportButtonHeight));
+    auto exportRow = area.removeFromTop(exportButtonHeight);
+    const auto exportGap = juce::jmax(10, spacing / 2);
+    const auto targetWidth = juce::jmin(640, exportRow.getWidth());
+    auto centeredRow = exportRow.withSizeKeepingCentre(targetWidth, exportButtonHeight);
+    const auto eachWidth = juce::jmax(120, (centeredRow.getWidth() - exportGap) / 2);
+    auto leftButtonArea = centeredRow.removeFromLeft(eachWidth);
+    centeredRow.removeFromLeft(exportGap);
+    auto rightButtonArea = centeredRow.removeFromLeft(eachWidth);
+    exportAudioButton.setBounds(leftButtonArea);
+    exportSingerNamesButton.setBounds(rightButtonArea);
     previewSectionArea = buildSectionArea(previewTop, area.getY() + juce::jmax(2, spacing / 3));
 }

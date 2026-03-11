@@ -12,6 +12,42 @@
 
 namespace
 {
+    juce::String joinSpeakerIdsCsv(const juce::Array<int> &speakerIds)
+    {
+        juce::StringArray tokens;
+        tokens.ensureStorageAllocated(speakerIds.size());
+        for (const auto speakerId : speakerIds)
+            tokens.add(juce::String(speakerId));
+        return tokens.joinIntoString(",");
+    }
+
+    juce::Array<int> parseSpeakerIdsCsv(const juce::String &csv)
+    {
+        juce::Array<int> parsed;
+        const auto tokens = juce::StringArray::fromTokens(csv, ",", "\"'");
+        parsed.ensureStorageAllocated(tokens.size());
+        for (const auto &token : tokens)
+        {
+            const auto trimmed = token.trim();
+            if (trimmed.isEmpty() || !trimmed.containsOnly("+-0123456789"))
+                continue;
+
+            const auto value = trimmed.getIntValue();
+            if (value >= 0)
+                parsed.addIfNotAlreadyThere(value);
+        }
+        return parsed;
+    }
+
+    juce::String buildSingerNamesCsv(const juce::Array<voicevox::SingerStyle> &singers)
+    {
+        juce::StringArray names;
+        names.ensureStorageAllocated(singers.size());
+        for (const auto &singer : singers)
+            names.add(singer.singerName + " (" + singer.styleName + ")");
+        return names.joinIntoString(", ");
+    }
+
     juce::AudioBuffer<float> resampleBufferLinear(const juce::AudioBuffer<float> &sourceBuffer,
                                                   const double sourceSampleRate,
                                                   const double targetSampleRate)
@@ -130,6 +166,42 @@ namespace
         outSampleRate = mixedSampleRate > 0.0 ? mixedSampleRate : 44100.0;
         return juce::Result::ok();
     }
+
+    int getTrackCountFromVvproj(const juce::File &vvprojFile)
+    {
+        if (!vvprojFile.existsAsFile())
+            return 0;
+
+        const auto root = juce::JSON::parse(vvprojFile);
+        const auto *rootObj = root.getDynamicObject();
+        if (rootObj == nullptr)
+            return 0;
+
+        const auto song = rootObj->getProperty("song");
+        const auto *songObj = song.getDynamicObject();
+        if (songObj == nullptr)
+            return 0;
+
+        const auto tracks = songObj->getProperty("tracks");
+        const auto *tracksObj = tracks.getDynamicObject();
+        if (tracksObj == nullptr)
+            return 0;
+
+        const auto trackOrder = songObj->getProperty("trackOrder");
+        if (const auto *orderArray = trackOrder.getArray(); orderArray != nullptr && !orderArray->isEmpty())
+            return orderArray->size();
+
+        return tracksObj->getProperties().size();
+    }
+
+    int clampTrackIndexForVvproj(const juce::File &vvprojFile, int trackIndex)
+    {
+        const auto trackCount = getTrackCountFromVvproj(vvprojFile);
+        if (trackCount <= 0)
+            return 0;
+
+        return juce::jlimit(0, trackCount - 1, trackIndex);
+    }
 }
 
 //==============================================================================
@@ -147,6 +219,8 @@ VVChorusPlayerAudioProcessor::VVChorusPlayerAudioProcessor()
 
 VVChorusPlayerAudioProcessor::~VVChorusPlayerAudioProcessor()
 {
+    if (voicevoxGenerationThread.joinable())
+        voicevoxGenerationThread.join();
 }
 
 //==============================================================================
@@ -518,6 +592,150 @@ juce::Result VVChorusPlayerAudioProcessor::generateChorusFromVvproj(const juce::
     return juce::Result::ok();
 }
 
+juce::Result VVChorusPlayerAudioProcessor::setSelectedVvprojFile(const juce::File &file)
+{
+    bool fileChanged = false;
+    {
+        const juce::SpinLock::ScopedLockType lock(projectSelectionLock);
+        fileChanged = selectedVvprojFile != file;
+        selectedVvprojFile = file;
+    }
+
+    if (file.existsAsFile())
+    {
+        const auto nextTrackIndex = fileChanged
+                                        ? 0
+                                        : clampTrackIndexForVvproj(file, selectedTrackIndex.load(std::memory_order_acquire));
+        selectedTrackIndex.store(nextTrackIndex, std::memory_order_release);
+        return juce::Result::ok();
+    }
+
+    selectedTrackIndex.store(0, std::memory_order_release);
+    return juce::Result::fail("vvproj file not found");
+}
+
+juce::File VVChorusPlayerAudioProcessor::getSelectedVvprojFile() const
+{
+    const juce::SpinLock::ScopedLockType lock(projectSelectionLock);
+    return selectedVvprojFile;
+}
+
+bool VVChorusPlayerAudioProcessor::hasSelectedVvprojFile() const noexcept
+{
+    const juce::SpinLock::ScopedLockType lock(projectSelectionLock);
+    return selectedVvprojFile.existsAsFile();
+}
+
+void VVChorusPlayerAudioProcessor::setSelectedTrackIndex(int trackIndex) noexcept
+{
+    selectedTrackIndex.store(juce::jmax(0, trackIndex), std::memory_order_release);
+}
+
+int VVChorusPlayerAudioProcessor::getSelectedTrackIndex() const noexcept
+{
+    return juce::jmax(0, selectedTrackIndex.load(std::memory_order_acquire));
+}
+
+void VVChorusPlayerAudioProcessor::setChorusSelectionState(const ChorusSelectionState &state)
+{
+    const juce::SpinLock::ScopedLockType lock(chorusStateLock);
+    chorusSelectionState = state;
+    chorusSelectionState.singerSelectionMode = juce::jlimit(0, 1, chorusSelectionState.singerSelectionMode);
+    chorusSelectionState.autoSelectionMethodId = juce::jmax(1, chorusSelectionState.autoSelectionMethodId);
+    chorusSelectionState.autoVoiceTypeId = juce::jmax(1, chorusSelectionState.autoVoiceTypeId);
+    chorusSelectionState.autoSingerCount = juce::jmax(1, chorusSelectionState.autoSingerCount);
+}
+
+VVChorusPlayerAudioProcessor::ChorusSelectionState VVChorusPlayerAudioProcessor::getChorusSelectionState() const
+{
+    const juce::SpinLock::ScopedLockType lock(chorusStateLock);
+    return chorusSelectionState;
+}
+
+void VVChorusPlayerAudioProcessor::setLastGeneratedSingerNamesCsv(const juce::String &csv)
+{
+    const juce::SpinLock::ScopedLockType lock(chorusStateLock);
+    lastGeneratedSingerNamesCsv = csv;
+}
+
+juce::String VVChorusPlayerAudioProcessor::getLastGeneratedSingerNamesCsv() const
+{
+    const juce::SpinLock::ScopedLockType lock(chorusStateLock);
+    return lastGeneratedSingerNamesCsv;
+}
+
+juce::Result VVChorusPlayerAudioProcessor::startChorusGeneration(const juce::Array<voicevox::SingerStyle> &singers,
+                                                                 const juce::Array<float> &panPositions,
+                                                                 const juce::String &baseUrl)
+{
+    if (voicevoxGenerating.load(std::memory_order_acquire))
+        return juce::Result::fail("VOICEVOX generation is already running");
+
+    const auto vvprojFile = getSelectedVvprojFile();
+    if (!vvprojFile.existsAsFile())
+        return juce::Result::fail("vvproj file not found");
+
+    if (singers.isEmpty())
+        return juce::Result::fail("No singer selected");
+
+    if (voicevoxGenerationThread.joinable())
+        voicevoxGenerationThread.join();
+
+    const auto requestedTrackIndex = selectedTrackIndex.load(std::memory_order_acquire);
+    const auto safeTrackIndex = clampTrackIndexForVvproj(vvprojFile, requestedTrackIndex);
+    selectedTrackIndex.store(safeTrackIndex, std::memory_order_release);
+    const auto singerNamesCsv = buildSingerNamesCsv(singers);
+
+    {
+        const juce::SpinLock::ScopedLockType lock(voicevoxResultLock);
+        lastVoicevoxGenerationResult = juce::Result::ok();
+    }
+
+    voicevoxGenerating.store(true, std::memory_order_release);
+    voicevoxGenerationThread = std::thread([this, vvprojFile, safeTrackIndex, singers, panPositions, baseUrl, singerNamesCsv]
+                                           {
+        const auto result = generateChorusFromVvproj(vvprojFile,
+                                                     safeTrackIndex,
+                                                     singers,
+                                                     panPositions,
+                                                     baseUrl);
+
+        if (result.wasOk())
+            setLastGeneratedSingerNamesCsv(singerNamesCsv);
+
+        {
+            const juce::SpinLock::ScopedLockType lock(voicevoxResultLock);
+            lastVoicevoxGenerationResult = result;
+        }
+
+        if (result.failed())
+        {
+            const juce::SpinLock::ScopedLockType statusLock(voicevoxStatusLock);
+            voicevoxStatus = "Failed: " + result.getErrorMessage();
+        }
+
+        voicevoxGenerationNonce.fetch_add(1, std::memory_order_acq_rel);
+        voicevoxGenerating.store(false, std::memory_order_release); });
+
+    return juce::Result::ok();
+}
+
+bool VVChorusPlayerAudioProcessor::isVoicevoxGenerating() const noexcept
+{
+    return voicevoxGenerating.load(std::memory_order_acquire);
+}
+
+uint32_t VVChorusPlayerAudioProcessor::getVoicevoxGenerationNonce() const noexcept
+{
+    return voicevoxGenerationNonce.load(std::memory_order_acquire);
+}
+
+juce::Result VVChorusPlayerAudioProcessor::getLastVoicevoxGenerationResult() const
+{
+    const juce::SpinLock::ScopedLockType lock(voicevoxResultLock);
+    return lastVoicevoxGenerationResult;
+}
+
 float VVChorusPlayerAudioProcessor::getVoicevoxProgress() const noexcept
 {
     return voicevoxProgress.load(std::memory_order_acquire);
@@ -712,15 +930,58 @@ juce::AudioProcessorEditor *VVChorusPlayerAudioProcessor::createEditor()
 //==============================================================================
 void VVChorusPlayerAudioProcessor::getStateInformation(juce::MemoryBlock &destData)
 {
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
+    juce::ValueTree state("VVChorusPlayerState");
+    const auto vvprojFile = getSelectedVvprojFile();
+    const auto chorusState = getChorusSelectionState();
+    state.setProperty("selectedVvprojPath", vvprojFile.getFullPathName(), nullptr);
+    state.setProperty("selectedTrackIndex", getSelectedTrackIndex(), nullptr);
+    state.setProperty("singerSelectionMode", chorusState.singerSelectionMode, nullptr);
+    state.setProperty("showAllStyles", chorusState.showAllStyles, nullptr);
+    state.setProperty("autoSelectionMethodId", chorusState.autoSelectionMethodId, nullptr);
+    state.setProperty("autoVoiceTypeId", chorusState.autoVoiceTypeId, nullptr);
+    state.setProperty("autoSingerCount", chorusState.autoSingerCount, nullptr);
+    state.setProperty("selectedSpeakerIdsCsv", joinSpeakerIdsCsv(chorusState.selectedSpeakerIds), nullptr);
+    state.setProperty("lastGeneratedSingerNamesCsv", getLastGeneratedSingerNamesCsv(), nullptr);
+
+    if (auto xml = state.createXml())
+        copyXmlToBinary(*xml, destData);
 }
 
 void VVChorusPlayerAudioProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
+    const auto xml = getXmlFromBinary(data, sizeInBytes);
+    if (xml == nullptr)
+        return;
+
+    const auto state = juce::ValueTree::fromXml(*xml);
+    if (!state.isValid() || !state.hasType("VVChorusPlayerState"))
+        return;
+
+    ChorusSelectionState chorusState;
+    chorusState.singerSelectionMode = static_cast<int>(state.getProperty("singerSelectionMode", 0));
+    chorusState.showAllStyles = static_cast<bool>(state.getProperty("showAllStyles", false));
+    chorusState.autoSelectionMethodId = static_cast<int>(state.getProperty("autoSelectionMethodId", 3));
+    chorusState.autoVoiceTypeId = static_cast<int>(state.getProperty("autoVoiceTypeId", 1));
+    chorusState.autoSingerCount = static_cast<int>(state.getProperty("autoSingerCount", 1));
+    chorusState.selectedSpeakerIds = parseSpeakerIdsCsv(state.getProperty("selectedSpeakerIdsCsv", "").toString());
+    setChorusSelectionState(chorusState);
+    setLastGeneratedSingerNamesCsv(state.getProperty("lastGeneratedSingerNamesCsv", "").toString());
+
+    const auto path = state.getProperty("selectedVvprojPath").toString();
+    const auto trackIndex = static_cast<int>(state.getProperty("selectedTrackIndex", 0));
+
+    if (path.isNotEmpty())
+    {
+        const auto file = juce::File(path);
+        setSelectedVvprojFile(file);
+        selectedTrackIndex.store(clampTrackIndexForVvproj(file, trackIndex), std::memory_order_release);
+    }
+    else
+    {
+        const juce::SpinLock::ScopedLockType lock(projectSelectionLock);
+        selectedVvprojFile = juce::File();
+        selectedTrackIndex.store(0, std::memory_order_release);
+    }
 }
 
 //==============================================================================

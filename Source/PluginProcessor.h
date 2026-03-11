@@ -10,6 +10,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <thread>
 #include "VoiceVoxClient.h"
 
 //==============================================================================
@@ -18,6 +19,16 @@
 class VVChorusPlayerAudioProcessor : public juce::AudioProcessor
 {
 public:
+  struct ChorusSelectionState
+  {
+    int singerSelectionMode = 0;
+    bool showAllStyles = false;
+    int autoSelectionMethodId = 3;
+    int autoVoiceTypeId = 1;
+    int autoSingerCount = 1;
+    juce::Array<int> selectedSpeakerIds;
+  };
+
   //==============================================================================
   VVChorusPlayerAudioProcessor();
   ~VVChorusPlayerAudioProcessor() override;
@@ -71,6 +82,21 @@ public:
                                         const juce::Array<voicevox::SingerStyle> &singers,
                                         const juce::Array<float> &panPositions,
                                         const juce::String &baseUrl = "http://127.0.0.1:50021");
+  juce::Result setSelectedVvprojFile(const juce::File &file);
+  juce::File getSelectedVvprojFile() const;
+  bool hasSelectedVvprojFile() const noexcept;
+  void setSelectedTrackIndex(int trackIndex) noexcept;
+  int getSelectedTrackIndex() const noexcept;
+  void setChorusSelectionState(const ChorusSelectionState &state);
+  ChorusSelectionState getChorusSelectionState() const;
+  void setLastGeneratedSingerNamesCsv(const juce::String &csv);
+  juce::String getLastGeneratedSingerNamesCsv() const;
+  juce::Result startChorusGeneration(const juce::Array<voicevox::SingerStyle> &singers,
+                                     const juce::Array<float> &panPositions,
+                                     const juce::String &baseUrl = "http://127.0.0.1:50021");
+  bool isVoicevoxGenerating() const noexcept;
+  uint32_t getVoicevoxGenerationNonce() const noexcept;
+  juce::Result getLastVoicevoxGenerationResult() const;
   float getVoicevoxProgress() const noexcept;
   juce::String getVoicevoxStatus() const;
   bool hasLoadedFile() const noexcept;
@@ -95,8 +121,19 @@ private:
   std::atomic<double> currentHostSampleRate{44100.0};
   std::atomic<double> loadedBufferSampleRate{0.0};
   std::atomic<float> voicevoxProgress{0.0f};
+  std::atomic<bool> voicevoxGenerating{false};
+  std::atomic<int> selectedTrackIndex{0};
+  std::atomic<uint32_t> voicevoxGenerationNonce{0};
   mutable juce::SpinLock voicevoxStatusLock;
   juce::String voicevoxStatus{"Idle"};
+  mutable juce::SpinLock projectSelectionLock;
+  juce::File selectedVvprojFile;
+  mutable juce::SpinLock voicevoxResultLock;
+  juce::Result lastVoicevoxGenerationResult{juce::Result::ok()};
+  mutable juce::SpinLock chorusStateLock;
+  ChorusSelectionState chorusSelectionState;
+  juce::String lastGeneratedSingerNamesCsv;
+  std::thread voicevoxGenerationThread;
   std::atomic<bool> previewPlaying{false};
   std::atomic<int64_t> previewPositionSamples{0};
   std::atomic<bool> hostPlayingNow{false};

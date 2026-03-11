@@ -53,6 +53,8 @@ private:
   juce::Array<float> buildPanPositions(int singerCount) const;
   juce::String getSingerDisplayText(const voicevox::SingerStyle &singer) const;
   void updateSingerSelectionLabel();
+  void persistSelectionStateToProcessor();
+  juce::String getSingerNamesCsvForExport() const;
   void syncSelectionModeFromTab();
   void updateSelectionModeUi();
   void refreshPreviewUi();
@@ -91,11 +93,12 @@ private:
   juce::TextButton playButton;
   juce::TextButton stopButton;
   juce::TextButton exportAudioButton;
+  juce::TextButton exportSingerNamesButton;
   juce::Slider previewPositionSlider;
   juce::Label previewTimeLabel;
   std::unique_ptr<juce::FileChooser> vvprojChooser;
   std::unique_ptr<juce::FileChooser> exportWavChooser;
-  juce::File selectedVvprojFile;
+  std::unique_ptr<juce::FileChooser> exportSingerNamesChooser;
   bool isGeneratingVoicevox{false};
   bool isLoadingSingers{false};
   bool isShowingAllStyles{false};
@@ -123,6 +126,7 @@ private:
   double displayPositionSeconds{0.0};
   double displayDurationSeconds{0.0};
   bool displayFollowingHost{false};
+  uint32_t observedVoicevoxGenerationNonce{0};
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VVChorusPlayerAudioProcessorEditor)
 };
